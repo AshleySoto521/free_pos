@@ -1,0 +1,19 @@
+# =====================================================================
+#  PLANTILLA. Copia este archivo a `config.toml` (en esta misma carpeta)
+#  y pon tus valores reales. `config.toml` está en .gitignore (no se sube).
+#
+#    cp src-tauri/.cargo/config.toml.example src-tauri/.cargo/config.toml
+#
+#  De dónde salen los valores:
+#   - FREEPOS_SUPABASE_URL .......... Supabase → Project Settings → API → Project URL
+#   - FREEPOS_SUPABASE_ANON_KEY ..... Supabase → Project Settings → API → anon public
+#   - FREEPOS_LICENSE_PUBLIC_KEY .... la llave pública (hex) de tu par Ed25519
+#                                     (la privada vive SOLO en Supabase Secrets)
+#
+#  Si dejas esto sin configurar, la app compila y corre en modo local
+#  (prueba/trial sin servidor de licencias).
+# =====================================================================
+[env]
+FREEPOS_SUPABASE_URL = "https://TU-PROYECTO.supabase.co"
+FREEPOS_SUPABASE_ANON_KEY = "TU_ANON_KEY"
+FREEPOS_LICENSE_PUBLIC_KEY = "tu_llave_publica_en_hex"

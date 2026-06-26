@@ -1,0 +1,37 @@
+node_modules
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+/.svelte-kit
+/build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+# Playwright
+test-results
+
+# Tauri / Rust (artefactos de compilación, pesados)
+/src-tauri/target
+
+# Secretos de build: URL de Supabase, anon key y llave pública del despliegue.
+# Se inyectan al compilar. Usa el .example como plantilla (ese SÍ se sube).
+src-tauri/.cargo/config.toml
+
+# Base de datos local (por si alguna queda en el árbol del proyecto)
+*.db
+*.db-wal
+*.db-shm
