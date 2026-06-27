@@ -1,12 +1,12 @@
 [package]
-name = "free-pos"
+name = "aquapos"
 version = "0.0.1"
 description = "POS para comercios y negocios"
 authors = ["Aqua Studio"]
-edition = "2026"
+edition = "2021"
 
 [lib]
-name = "free_pos_lib"
+name = "aquapos_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

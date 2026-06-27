@@ -961,7 +961,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "free-pos"
+name = "aquapos"
 version = "0.0.1"
 dependencies = [
  "argon2",

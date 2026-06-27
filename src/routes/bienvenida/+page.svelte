@@ -2,9 +2,10 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { api } from '$lib/api';
+	import { api, type Moneda } from '$lib/api';
 	import { session } from '$lib/stores/session';
 	import { toast } from '$lib/stores/toast';
+	import { fijarMoneda } from '$lib/stores/ajustes';
 	import SelectorCatalogo from '$lib/components/SelectorCatalogo.svelte';
 
 	let paso = $state(1);
@@ -14,6 +15,10 @@
 	let pie = $state('¡Gracias por su compra!');
 	let guardando = $state(false);
 	let numCategorias = $state(0);
+
+	let monedas = $state<Moneda[]>([]);
+	let monedaCod = $state('MXN');
+	const monedaSel = $derived(monedas.find((m) => m.codigo === monedaCod) ?? null);
 
 	onMount(async () => {
 		if ($session?.rol !== 'Administrador') {
@@ -26,6 +31,9 @@
 		direccion = v('Direccion');
 		telefono = v('Telefono');
 		pie = v('PieTicket') || '¡Gracias por su compra!';
+		monedas = await api.listarMonedas();
+		monedaCod =
+			v('moneda_codigo') || monedas.find((m) => m.esPrincipal)?.codigo || monedas[0]?.codigo || 'MXN';
 		numCategorias = (await api.listarCategorias()).length;
 	});
 
@@ -41,8 +49,11 @@
 				{ clave: 'Direccion', valor: direccion.trim() },
 				{ clave: 'Telefono', valor: telefono.trim() },
 				{ clave: 'PieTicket', valor: pie.trim() },
+				{ clave: 'moneda_codigo', valor: monedaSel?.codigo ?? 'MXN' },
+				{ clave: 'moneda_simbolo', valor: monedaSel?.simbolo ?? '$' },
 				{ clave: 'onboarding_completo', valor: '1' } // ya no se vuelve a pedir
 			]);
+			fijarMoneda(monedaSel?.simbolo, monedaSel?.codigo);
 			paso = 2;
 		} catch (e) {
 			toast(String(e), 'error');
@@ -71,7 +82,7 @@
 		<div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
 			{#if paso === 1}
 				<div class="mb-4 text-center">
-					<img src="/logo_pos.png" alt="Free POS" class="mx-auto mb-2 h-14 w-14 rounded-xl object-contain" />
+					<img src="/logo_pos.png" alt="AquaPOS" class="mx-auto mb-2 h-14 w-14 rounded-xl object-contain" />
 					<h1 class="text-xl font-semibold text-slate-800">¡Bienvenido! Configura tu negocio</h1>
 					<p class="mt-1 text-sm text-slate-500">Estos datos aparecerán en el ticket de venta.</p>
 				</div>
@@ -91,6 +102,17 @@
 					<div>
 						<label for="p" class="mb-1 block text-sm font-medium text-slate-700">Pie de ticket</label>
 						<input id="p" bind:value={pie} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+					</div>
+					<div>
+						<label for="mon" class="mb-1 block text-sm font-medium text-slate-700">Divisa</label>
+						<select id="mon" bind:value={monedaCod} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+							{#each monedas as m (m.idMoneda)}
+								<option value={m.codigo}>{m.simbolo} {m.codigo} — {m.moneda}</option>
+							{/each}
+						</select>
+						<p class="mt-1 text-xs text-slate-400">
+							Se mostrará junto a los precios (ej. {monedaSel?.simbolo ?? '$'}100.00 {monedaSel?.codigo ?? ''}). Agrega más en Catálogos → Monedas.
+						</p>
 					</div>
 					<button onclick={guardarDatos} disabled={guardando} class="w-full rounded-lg bg-indigo-600 py-2.5 font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
 						{guardando ? 'Guardando…' : 'Continuar'}

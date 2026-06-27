@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    free_pos_lib::run();
+    aquapos_lib::run();
 }

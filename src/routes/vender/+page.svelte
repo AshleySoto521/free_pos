@@ -26,6 +26,24 @@
 	let cargando = $state(true);
 	let negocio = $state<Record<string, string>>({});
 
+	// Reloj en vivo: fecha y hora actuales a la vista del cajero.
+	let ahora = $state(new Date());
+	const reloj = $derived(
+		ahora.toLocaleString('es-MX', {
+			weekday: 'short',
+			day: '2-digit',
+			month: '2-digit',
+			year: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit',
+			second: '2-digit'
+		})
+	);
+	$effect(() => {
+		const id = setInterval(() => (ahora = new Date()), 1000);
+		return () => clearInterval(id);
+	});
+
 	// Abrir caja desde aquí (no se puede vender sin caja abierta)
 	let montoInicialCaja = $state<number | null>(0);
 	let abriendoCaja = $state(false);
@@ -244,7 +262,10 @@
 			<button onclick={() => goto(resolve('/'))} class="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100" aria-label="Volver">←</button>
 			<h1 class="text-lg font-semibold text-slate-800">Vender</h1>
 		</div>
-		<span class="text-sm text-slate-400">{$session?.nombre}</span>
+		<div class="flex items-center gap-4">
+			<span class="text-sm tabular-nums text-slate-500">🕒 {reloj}</span>
+			<span class="text-sm text-slate-400">{$session?.nombre}</span>
+		</div>
 	</header>
 
 	{#if cargando}

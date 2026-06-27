@@ -20,7 +20,7 @@
 
 	<main class="mx-auto max-w-3xl p-6">
 		<article id="guia-imprimible" class="prose prose-slate max-w-none rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-			<h1>Free POS — Guía de uso</h1>
+			<h1>AquaPOS — Guía de uso</h1>
 			<p>Punto de venta para tu negocio. Esta guía resume cómo operarlo día a día.</p>
 
 			<h2>Roles</h2>
@@ -93,7 +93,7 @@
 			</ul>
 
 			<hr />
-			<p><em>Free POS — Aqua Studio.</em></p>
+			<p><em>AquaPOS — Aqua Studio.</em></p>
 		</article>
 	</main>
 </div>

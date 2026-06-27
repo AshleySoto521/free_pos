@@ -27,8 +27,8 @@
 
 <form onsubmit={activar} class="w-full max-w-sm space-y-5">
 	<div class="text-center">
-		<img src="/logo_pos.png" alt="Free POS" class="mx-auto mb-3 h-16 w-16 rounded-xl object-contain" />
-		<h1 class="text-xl font-semibold text-slate-800">Activar Free POS</h1>
+		<img src="/logo_pos.png" alt="AquaPOS" class="mx-auto mb-3 h-16 w-16 rounded-xl object-contain" />
+		<h1 class="text-xl font-semibold text-slate-800">Activar AquaPOS</h1>
 		<p class="mt-1 text-sm text-slate-500">
 			{estado && estado.mensaje && estado.estado !== 'SinActivar'
 				? estado.mensaje

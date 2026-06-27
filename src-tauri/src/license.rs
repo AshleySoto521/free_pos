@@ -28,20 +28,20 @@ use sha2::{Digest, Sha256};
 
 /// Llave PÚBLICA del servidor (32 bytes en hex). La privada vive SOLO en
 /// Supabase (Secret). La pública no es secreta, pero se inyecta junto al resto.
-const SERVER_PUBLIC_KEY_HEX: &str = match option_env!("FREEPOS_LICENSE_PUBLIC_KEY") {
+const SERVER_PUBLIC_KEY_HEX: &str = match option_env!("AQUAPOS_LICENSE_PUBLIC_KEY") {
     Some(v) => v,
     None => "",
 };
 
 /// URL base del proyecto Supabase (ej. https://xxxxx.supabase.co).
-const SUPABASE_URL: &str = match option_env!("FREEPOS_SUPABASE_URL") {
+const SUPABASE_URL: &str = match option_env!("AQUAPOS_SUPABASE_URL") {
     Some(v) => v,
     None => "",
 };
 
 /// anon/public key de Supabase. Es segura para el cliente; se manda como gate
 /// ligero anti-spam cuando las Edge Functions tienen "Verify JWT" activado.
-const SUPABASE_ANON_KEY: &str = match option_env!("FREEPOS_SUPABASE_ANON_KEY") {
+const SUPABASE_ANON_KEY: &str = match option_env!("AQUAPOS_SUPABASE_ANON_KEY") {
     Some(v) => v,
     None => "",
 };
@@ -119,7 +119,7 @@ pub fn get_machine_id() -> Result<String, String> {
     let raw = machine_uid::get().map_err(|e| format!("No se pudo leer el ID de máquina: {e}"))?;
     let mut hasher = Sha256::new();
     hasher.update(raw.as_bytes());
-    hasher.update(b"FreePOS-v1"); // sal fija propia de la app
+    hasher.update(b"AquaPOS-v1"); // sal fija propia de la app
     Ok(format!("{:x}", hasher.finalize()))
 }
 

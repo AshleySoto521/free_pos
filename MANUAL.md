@@ -1,4 +1,4 @@
-# Free POS — Manual de uso
+# AquaPOS — Manual de uso
 
 Punto de venta para tu negocio (abarrotes, farmacia, refaccionaria, papelería, peluquería, etc.). Este manual resume cómo operarlo día a día.
 
@@ -76,4 +76,8 @@ Registro de auditoría: **quién hizo qué y cuándo** (ventas, cancelaciones, a
 
 ---
 
-*Free POS — Aqua Studio.*
+## Contacto
+
+Soporte técnico, compras o dudas: **contactoaquastudio@gmail.com**
+
+© Aqua Studio 2026 — Todos los derechos reservados

@@ -88,5 +88,5 @@ pub fn run() {
             commands::registrar_abono,
         ])
         .run(tauri::generate_context!())
-        .expect("error al iniciar Free POS");
+        .expect("error al iniciar AquaPOS");
 }

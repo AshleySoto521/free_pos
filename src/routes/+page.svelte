@@ -49,8 +49,8 @@
 <div class="min-h-screen bg-slate-100">
 	<header class="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3 shadow-sm">
 		<div class="flex items-center gap-3">
-			<img src="/logo_pos.png" alt="Free POS" class="h-9 w-9 rounded-lg object-contain" />
-			<span class="text-lg font-semibold text-slate-800">Free POS</span>
+			<img src="/logo_pos.png" alt="AquaPOS" class="h-9 w-9 rounded-lg object-contain" />
+			<span class="text-lg font-semibold text-slate-800">AquaPOS</span>
 		</div>
 		<div class="flex items-center gap-4">
 			<div class="text-right">

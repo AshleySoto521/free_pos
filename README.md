@@ -1,4 +1,4 @@
-# Free POS
+# AquaPOS
 
 Punto de venta de escritorio para **comercios y negocios** (abarrotes, farmacia, refaccionaria, papelería, peluquería, etc.). App Windows (`.exe`) construida con **SvelteKit + Tauri**, base de datos **SQLite local** y **licenciamiento en Supabase**.
 
@@ -47,7 +47,7 @@ Punto de venta de escritorio para **comercios y negocios** (abarrotes, farmacia,
 ## Estructura
 
 ```
-Free_POS/
+aquapos/
 ├── src/                          # Frontend SvelteKit
 │   ├── routes/                   # una carpeta por pantalla (+page.svelte)
 │   │   ├── +layout.svelte        # monta <Gate> (portero) + <Toast>
@@ -143,9 +143,9 @@ cp src-tauri/.cargo/config.toml.example src-tauri/.cargo/config.toml
 # edita config.toml con tus valores reales
 ```
 
-- `FREEPOS_SUPABASE_URL` — Supabase → Project Settings → API → Project URL.
-- `FREEPOS_SUPABASE_ANON_KEY` — Supabase → Project Settings → API → anon public.
-- `FREEPOS_LICENSE_PUBLIC_KEY` — llave pública (hex) del par Ed25519. La **privada** vive solo en Supabase Secrets (`LICENSE_PRIVATE_KEY`), nunca en el repo ni en el `.exe`.
+- `AQUAPOS_SUPABASE_URL` — Supabase → Project Settings → API → Project URL.
+- `AQUAPOS_SUPABASE_ANON_KEY` — Supabase → Project Settings → API → anon public.
+- `AQUAPOS_LICENSE_PUBLIC_KEY` — llave pública (hex) del par Ed25519. La **privada** vive solo en Supabase Secrets (`LICENSE_PRIVATE_KEY`), nunca en el repo ni en el `.exe`.
 
 Sin configurar, la app compila y corre en **modo local** (trial sin servidor de licencias).
 
@@ -170,13 +170,13 @@ pnpm build              # build del front (SPA estática -> /build)
 ## Base de datos local: ubicación y reset
 
 ```
-%APPDATA%\com.aquastudio.freepos\pos.db        (+ -wal, -shm)
+%APPDATA%\com.aquastudio.aquapos\pos.db        (+ -wal, -shm)
 ```
 
 Reset (con la app cerrada):
 
 ```powershell
-Remove-Item "$env:APPDATA\com.aquastudio.freepos\pos.db*" -Force
+Remove-Item "$env:APPDATA\com.aquastudio.aquapos\pos.db*" -Force
 ```
 
 Al reiniciar, `db.rs` recrea esquema + migraciones + siembra.
@@ -224,4 +224,8 @@ verifica con la llave pública embebida. La **prueba se ancla por `machine_id`**
 
 ---
 
-*Free POS — Aqua Studio.*
+## Contacto
+
+Soporte técnico, compras o dudas: **contactoaquastudio@gmail.com**
+
+© Aqua Studio 2026 — Todos los derechos reservados

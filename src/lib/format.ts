@@ -1,11 +1,22 @@
-// Formato de moneda en pesos mexicanos.
-const mxn = new Intl.NumberFormat('es-MX', {
-	style: 'currency',
-	currency: 'MXN'
+// Formato de moneda. El símbolo y el código (divisa) son configurables y se
+// fijan al iniciar la app con setMoneda(), según la divisa elegida. Se muestra
+// el código junto al monto, p. ej. "$100.00 MXN" o "$10.00 USD".
+let _simbolo = '$';
+let _codigo = 'MXN';
+const numero = new Intl.NumberFormat('es-MX', {
+	minimumFractionDigits: 2,
+	maximumFractionDigits: 2
 });
 
+/** Fija la divisa que se mostrará en TODOS los precios (símbolo + código). */
+export function setMoneda(simbolo?: string | null, codigo?: string | null) {
+	_simbolo = (simbolo && simbolo.trim()) || '$';
+	_codigo = (codigo ?? '').trim();
+}
+
 export function pesos(n: number): string {
-	return mxn.format(n ?? 0);
+	const monto = `${_simbolo}${numero.format(n ?? 0)}`;
+	return _codigo ? `${monto} ${_codigo}` : monto;
 }
 
 // ---------------------------------------------------------------------

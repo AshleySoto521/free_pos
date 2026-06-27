@@ -42,6 +42,7 @@
 	let existenciaInicial = $state<number | null>(0);
 	let seVendePeso = $state(false);
 	const esServicio = $derived(tipo === 'Servicio');
+	const catSel = $derived(categorias.find((c) => c.idCategoria === idCat) ?? null);
 	let activo = $state(true);
 	let idCat = $state<number | null>(null);
 	let idUni = $state<number | null>(null);
@@ -365,7 +366,7 @@
 						</div>
 						<select id="cat" bind:value={idCat} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
 							{#each categorias as c (c.idCategoria)}
-								<option value={c.idCategoria}>{c.categoria}</option>
+								<option value={c.idCategoria} title={c.descripcion ?? ''}>{c.categoria}</option>
 							{/each}
 						</select>
 					</div>
@@ -378,6 +379,12 @@
 						</select>
 					</div>
 				</div>
+
+				{#if catSel?.descripcion}
+					<p class="-mt-1 rounded-lg bg-slate-50 px-3 py-1.5 text-xs text-slate-500">
+						<span class="font-medium text-slate-600">{catSel.categoria}:</span> {catSel.descripcion}
+					</p>
+				{/if}
 
 				{#if !esServicio}
 					<label class="flex items-center gap-2 text-sm text-slate-700">

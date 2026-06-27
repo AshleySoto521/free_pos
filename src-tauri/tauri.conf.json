@@ -1,8 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Free POS",
+  "productName": "AquaPOS",
+  "mainBinaryName": "AquaPOS",
   "version": "0.0.1",
-  "identifier": "com.aquastudio.freepos",
+  "identifier": "com.aquastudio.aquapos",
   "build": {
     "frontendDist": "../build",
     "devUrl": "http://localhost:5173",
@@ -13,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Free POS",
+        "title": "AquaPOS",
         "width": 1100,
         "height": 720,
         "minWidth": 900,

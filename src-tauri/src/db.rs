@@ -22,7 +22,7 @@ pub type Db = Pool<SqliteConnectionManager>;
 const SCHEMA: &str = include_str!("../../scripts/posdb.sql");
 
 /// Abre (o crea) la base en la carpeta de datos de la app del usuario:
-///   Windows -> C:\Users\<user>\AppData\Roaming\com.aquastudio.freepos\pos.db
+///   Windows -> C:\Users\<user>\AppData\Roaming\com.aquastudio.aquapos\pos.db
 pub fn init(app: &AppHandle) -> Result<Db, Box<dyn Error>> {
     let dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&dir)?;
@@ -143,7 +143,7 @@ pub fn init(app: &AppHandle) -> Result<Db, Box<dyn Error>> {
 /// según su giro durante la configuración inicial (importándolo desde un CSV).
 fn sembrar_datos_iniciales(conn: &rusqlite::Connection) -> Result<(), Box<dyn Error>> {
     conn.execute_batch(
-        "INSERT INTO UnidadMedida (UnidadMedida) VALUES ('Pieza'), ('Kilogramo'), ('Litro');
+        "INSERT INTO UnidadMedida (UnidadMedida) VALUES ('Pieza'), ('Kilogramo'), ('Gramo'), ('Litro'), ('Mililitro'), ('Caja');
 
          INSERT INTO MetodosPago (MetodoPago, RequiereReferencia) VALUES
             ('Efectivo', 0),

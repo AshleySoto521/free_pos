@@ -2,9 +2,9 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { api } from '$lib/api';
+	import { api, type Moneda } from '$lib/api';
 	import { session } from '$lib/stores/session';
-	import { modoVenta, giro, type ModoVenta } from '$lib/stores/ajustes';
+	import { modoVenta, giro, fijarMoneda, type ModoVenta } from '$lib/stores/ajustes';
 
 	const campos = [
 		{ clave: 'NombreTienda', label: 'Nombre del negocio' },
@@ -22,6 +22,9 @@
 	let valores = $state<Record<string, string>>({});
 	let modoSel = $state<ModoVenta>('productos');
 	let giroSel = $state('');
+	let monedas = $state<Moneda[]>([]);
+	let monedaCod = $state('MXN');
+	const monedaSel = $derived(monedas.find((m) => m.codigo === monedaCod) ?? null);
 	let cargando = $state(true);
 	let guardando = $state(false);
 	let guardado = $state(false);
@@ -41,6 +44,12 @@
 			const m = items.find((it) => it.clave === 'modo_venta')?.valor;
 			if (m === 'productos' || m === 'servicios' || m === 'ambos') modoSel = m;
 			giroSel = items.find((it) => it.clave === 'giro')?.valor ?? '';
+			monedas = await api.listarMonedas();
+			monedaCod =
+				items.find((it) => it.clave === 'moneda_codigo')?.valor ||
+				monedas.find((m) => m.esPrincipal)?.codigo ||
+				monedas[0]?.codigo ||
+				'MXN';
 		} finally {
 			cargando = false;
 		}
@@ -54,11 +63,14 @@
 			await api.guardarConfig([
 				...campos.map((c) => ({ clave: c.clave, valor: valores[c.clave] ?? '' })),
 				{ clave: 'modo_venta', valor: modoSel },
-				{ clave: 'giro', valor: giroSel.trim() }
+				{ clave: 'giro', valor: giroSel.trim() },
+				{ clave: 'moneda_codigo', valor: monedaSel?.codigo ?? 'MXN' },
+				{ clave: 'moneda_simbolo', valor: monedaSel?.simbolo ?? '$' }
 			]);
 			// Refleja el cambio en el resto de la app sin recargar.
 			modoVenta.set(modoSel);
 			giro.set(giroSel.trim());
+			fijarMoneda(monedaSel?.simbolo, monedaSel?.codigo);
 			guardado = true;
 		} catch (e) {
 			error = String(e);
@@ -101,6 +113,18 @@
 							</button>
 						{/each}
 					</div>
+				</div>
+
+				<div>
+					<label for="mon" class="mb-1 block text-sm font-medium text-slate-700">Divisa</label>
+					<select id="mon" bind:value={monedaCod} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+						{#each monedas as m (m.idMoneda)}
+							<option value={m.codigo}>{m.simbolo} {m.codigo} — {m.moneda}</option>
+						{/each}
+					</select>
+					<p class="mt-1 text-xs text-slate-400">
+						Se muestra junto a los precios (ej. {monedaSel?.simbolo ?? '$'}100.00 {monedaSel?.codigo ?? ''}). Agrega más en Catálogos → Monedas.
+					</p>
 				</div>
 
 				<hr class="border-slate-100" />

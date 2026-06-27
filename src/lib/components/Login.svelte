@@ -25,7 +25,7 @@
 
 <form onsubmit={entrar} class="w-full max-w-sm space-y-5">
 	<div class="text-center">
-		<img src="/logo_pos.png" alt="Free POS" class="mx-auto mb-3 h-16 w-16 rounded-xl object-contain" />
+		<img src="/logo_pos.png" alt="AquaPOS" class="mx-auto mb-3 h-16 w-16 rounded-xl object-contain" />
 		<h1 class="text-xl font-semibold text-slate-800">Iniciar sesión</h1>
 		<p class="mt-1 text-sm text-slate-500">Entra con tu usuario y contraseña.</p>
 	</div>

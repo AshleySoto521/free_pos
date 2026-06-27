@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import { api, type LicenseStatus } from '$lib/api';
 	import { session, licencia, enTauri, setSession } from '$lib/stores/session';
+	import { cargarAjustes } from '$lib/stores/ajustes';
 	import Activar from './Activar.svelte';
 	import SetupAdmin from './SetupAdmin.svelte';
 	import Login from './Login.svelte';
@@ -40,6 +41,9 @@
 				fase = 'activar';
 				return;
 			}
+			// Carga divisa + ajustes ANTES de mostrar la app, para que los precios
+			// salgan con la moneda correcta desde el primer render.
+			await cargarAjustes();
 			// Restaura la sesión si el backend aún la conserva (sobrevive a Ctrl+R:
 			// el proceso de Rust no se reinicia al recargar la ventana).
 			const activa = await api.sesionActual();
