@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { APP_VERSION } from '$lib/version';
 
 	function imprimir() {
 		window.print();
@@ -22,6 +23,7 @@
 		<article id="guia-imprimible" class="prose prose-slate max-w-none rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
 			<h1>AquaPOS — Guía de uso</h1>
 			<p>Punto de venta para tu negocio. Esta guía resume cómo operarlo día a día.</p>
+			<p><strong>Versión {APP_VERSION}</strong></p>
 
 			<h2>Roles</h2>
 			<ul>
@@ -33,8 +35,9 @@
 			<ol>
 				<li>Crea el usuario administrador (configuración inicial).</li>
 				<li>Captura los <strong>datos del negocio</strong> (aparecen en el ticket).</li>
+				<li>Elige tu <strong>moneda</strong> y tu <strong>modo de venta</strong> (productos, servicios o ambos) en el asistente o en Configuración.</li>
 				<li>Elige un <strong>catálogo de categorías</strong> según tu giro (asistente inicial o Catálogos → Categorías → 📚 Catálogo por giro).</li>
-				<li>Da de alta o <strong>importa productos</strong> (Inventario o Catálogos → Importar/Exportar).</li>
+				<li>Carga tu inventario inicial en Catálogos → Importar/Exportar → <strong>🏁 Iniciar inventario</strong> (solo al inaugurar). Después el stock entra por <strong>Compras</strong>.</li>
 			</ol>
 
 			<h2>Vender 🛒</h2>
@@ -55,31 +58,42 @@
 
 			<h2>Inventario 📦</h2>
 			<ul>
-				<li>Crea y edita productos (precio, costo, código, categoría, stock mínimo).</li>
-				<li><strong>Ajustar</strong> existencias: Entrada, Merma o Ajuste (conteo físico).</li>
-				<li>Las existencias bajas se marcan en rojo.</li>
+				<li>Crea y edita productos (precio, código, categoría, unidad, stock mínimo, si se vende por peso o maneja caducidad).</li>
+				<li>El producto se crea con <strong>0 existencia</strong>: el stock entra por <strong>Compras</strong> (o por la carga inicial), nunca en el alta.</li>
+				<li><strong>Ajustar</strong> existencias: <em>Conteo físico</em> (existencia real) o <em>Merma/Baja</em>; el <strong>motivo es obligatorio</strong>.</li>
+				<li>Costeo <strong>PEPS</strong> automático; revisa el <strong>kardex valorizado</strong> de cada producto (botón Historial).</li>
+				<li>Las existencias bajas se marcan en rojo. La caducidad/lote avisa de próximos a vencer.</li>
 			</ul>
 
 			<h2>Clientes y fiado 🧾</h2>
 			<ul>
-				<li>Registra clientes y consulta su <strong>estado de cuenta</strong> (cargos y abonos).</li>
-				<li>Registra <strong>abonos</strong> para bajar su deuda.</li>
+				<li>Registra clientes con <strong>nombre y teléfono obligatorios</strong> y correo opcional.</li>
+				<li>Consulta su <strong>estado de cuenta</strong> (cargos y abonos) y registra <strong>abonos</strong> para bajar su deuda.</li>
 			</ul>
 
 			<h2>Compras y proveedores 🚚</h2>
 			<ul>
-				<li>Registra compras para <strong>reabastecer</strong> (suma al inventario y opcionalmente actualiza el costo).</li>
-				<li>Administra tu directorio de proveedores.</li>
+				<li>Registra compras para <strong>reabastecer</strong>: suma al inventario y crea la capa de costo PEPS (el costo de referencia se actualiza solo).</li>
+				<li>Agrega varios productos a la vez o <strong>importa la factura</strong> (Excel/CSV); si trae precio de venta, también lo actualiza.</li>
+				<li><strong>No se duplican facturas</strong> (aunque no tengan folio) y solo se registran facturas completas.</li>
+				<li>Directorio de proveedores con teléfono obligatorio + correo opcional.</li>
 			</ul>
 
 			<h2>Reportes 📈</h2>
 			<ul>
-				<li>Genera reportes de <strong>ventas, inventario y cortes</strong> en Excel (XLSX), PDF o ambos.</li>
+				<li>Genera reportes de <strong>ventas, inventario, cortes, utilidad e inventario valorizado</strong> en Excel (XLSX), PDF o ambos.</li>
 			</ul>
 
 			<h2>Catálogos ⚙️</h2>
 			<ul>
-				<li>Categorías, unidades, métodos de pago, <strong>monedas y denominaciones</strong>, datos del negocio e importar/exportar.</li>
+				<li>Categorías, unidades, métodos de pago, <strong>monedas y denominaciones</strong> y datos del negocio.</li>
+			</ul>
+
+			<h2>Importar / Exportar 📥</h2>
+			<ul>
+				<li>Cada sección tiene un botón <strong>⬇️ Descargar plantilla .csv</strong>: bájala, llénala en Excel y súbela.</li>
+				<li>Tres formas de cargar productos: <strong>Agregar productos</strong> (nuevos, sin stock), <strong>🏁 Iniciar inventario</strong> (carga inicial) y <strong>💲 Actualizar precios</strong> (en masa).</li>
+				<li>Si falta un dato, no se importa nada y te dice qué corregir.</li>
 			</ul>
 
 			<h2>Bitácora 📋</h2>
@@ -93,7 +107,7 @@
 			</ul>
 
 			<hr />
-			<p><em>AquaPOS — Aqua Studio.</em></p>
+			<p><em>AquaPOS v{APP_VERSION} — Aqua Studio.</em></p>
 		</article>
 	</main>
 </div>

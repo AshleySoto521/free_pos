@@ -2,6 +2,7 @@
 	import './layout.css';
 	import Gate from '$lib/components/Gate.svelte';
 	import Toast from '$lib/components/Toast.svelte';
+	import { APP_VERSION } from '$lib/version';
 
 	let { children } = $props();
 
@@ -22,7 +23,10 @@
 				contactoaquastudio@gmail.com
 			</a>
 		</p>
-		<p class="mt-0.5">© Aqua Studio {year} — Todos los derechos reservados</p>
+		<p class="mt-0.5">
+			© Aqua Studio {year} — Todos los derechos reservados
+			<span class="text-slate-400">· AquaPOS v{APP_VERSION}</span>
+		</p>
 	</footer>
 </div>
 

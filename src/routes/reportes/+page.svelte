@@ -23,7 +23,7 @@
 	}
 	const fmt = (f: string) => fechaHora(f);
 
-	let tipo = $state<'ventas' | 'inventario' | 'cortes'>('ventas');
+	let tipo = $state<'ventas' | 'inventario' | 'movimientos' | 'utilidad' | 'cortes'>('ventas');
 	let desde = $state(hoyStr());
 	let hasta = $state(hoyStr());
 	let formato = $state<'xlsx' | 'pdf' | 'ambos'>('ambos');
@@ -31,7 +31,9 @@
 	let mensaje = $state('');
 	let error = $state('');
 
-	const conRango = $derived(tipo === 'ventas' || tipo === 'cortes');
+	const conRango = $derived(
+		tipo === 'ventas' || tipo === 'cortes' || tipo === 'movimientos' || tipo === 'utilidad'
+	);
 
 	onMount(() => {
 		if ($session?.rol !== 'Administrador') goto(resolve('/'));
@@ -61,20 +63,40 @@
 	}
 
 	async function repInventario(): Promise<Reporte> {
-		const productos = await api.listarProductos(true);
-		const valor = productos.reduce((s, p) => s + p.existencia * p.precioCosto, 0);
+		const items = await api.reporteInventarioValorizado();
+		const valor = items.reduce((s, x) => s + x.valor, 0);
 		return {
-			nombre: 'inventario',
-			titulo: 'Reporte de inventario',
-			subtitulo: `${productos.length} productos  ·  Valor a costo ${pesos(valor)}`,
-			encabezados: ['PRODUCTO', 'CATEGORIA', 'EXISTENCIA', 'PRECIOVENTA', 'PRECIOCOSTO', 'VALOR'],
-			filas: productos.map((p) => [
-				p.producto,
-				p.categoria ?? '',
-				p.existencia,
-				Number(p.precioUnitario.toFixed(2)),
-				Number(p.precioCosto.toFixed(2)),
-				Number((p.existencia * p.precioCosto).toFixed(2))
+			nombre: 'inventario_valorizado',
+			titulo: 'Inventario valorizado (PEPS)',
+			subtitulo: `${items.length} productos  ·  Valor del inventario ${pesos(valor)}`,
+			encabezados: ['PRODUCTO', 'EXISTENCIA', 'COSTO UNIT (PEPS)', 'VALOR'],
+			filas: items.map((x) => [
+				x.producto,
+				Number(x.existencia.toFixed(2)),
+				Number(x.costoUnitario.toFixed(2)),
+				Number(x.valor.toFixed(2))
+			])
+		};
+	}
+
+	async function repUtilidad(): Promise<Reporte> {
+		const items = await api.reporteUtilidad(desde, hasta);
+		const ventas = items.reduce((s, x) => s + x.ventas, 0);
+		const costo = items.reduce((s, x) => s + x.costo, 0);
+		const utilidad = ventas - costo;
+		const margen = ventas > 0 ? (utilidad / ventas) * 100 : 0;
+		return {
+			nombre: `utilidad_${desde}_a_${hasta}`,
+			titulo: 'Utilidad (PEPS)',
+			subtitulo: `${desde} a ${hasta}  ·  Vendiste ${pesos(ventas)}  ·  Te costó ${pesos(costo)}  ·  Ganaste ${pesos(utilidad)} (${margen.toFixed(1)}%)`,
+			encabezados: ['PRODUCTO', 'VENDIDO', 'VENTAS', 'COSTO', 'UTILIDAD', 'MARGEN %'],
+			filas: items.map((x) => [
+				x.producto,
+				Number(x.vendido.toFixed(2)),
+				Number(x.ventas.toFixed(2)),
+				Number(x.costo.toFixed(2)),
+				Number(x.utilidad.toFixed(2)),
+				Number(x.margen.toFixed(1))
 			])
 		};
 	}
@@ -98,13 +120,40 @@
 		};
 	}
 
+	async function repMovimientos(): Promise<Reporte> {
+		const m = await api.reporteMovimientos(desde, hasta);
+		const tot = (k: 'comprado' | 'vendido') => m.reduce((s, x) => s + x[k], 0);
+		return {
+			nombre: `movimientos_${desde}_a_${hasta}`,
+			titulo: 'Entradas y salidas de mercancía',
+			subtitulo: `${desde} a ${hasta}  ·  Comprado ${tot('comprado')}  ·  Vendido ${tot('vendido')}`,
+			encabezados: ['PRODUCTO', 'COMPRADO', 'VENDIDO', 'MERMA', 'ENTRADAS', 'SALIDAS'],
+			filas: m.map((x) => [
+				x.producto,
+				Number(x.comprado.toFixed(2)),
+				Number(x.vendido.toFixed(2)),
+				Number(x.merma.toFixed(2)),
+				Number(x.entradas.toFixed(2)),
+				Number(x.salidas.toFixed(2))
+			])
+		};
+	}
+
 	async function generar() {
 		generando = true;
 		error = '';
 		mensaje = '';
 		try {
 			const rep =
-				tipo === 'ventas' ? await repVentas() : tipo === 'inventario' ? await repInventario() : await repCortes();
+				tipo === 'ventas'
+					? await repVentas()
+					: tipo === 'inventario'
+						? await repInventario()
+						: tipo === 'movimientos'
+							? await repMovimientos()
+							: tipo === 'utilidad'
+								? await repUtilidad()
+								: await repCortes();
 
 			if (rep.filas.length === 0) {
 				error = 'No hay datos para ese reporte en el rango elegido.';
@@ -139,7 +188,7 @@
 			<div>
 				<p class="mb-2 text-sm font-medium text-slate-700">Reporte</p>
 				<div class="grid grid-cols-3 gap-2">
-					{#each [['ventas', '🛒 Ventas'], ['inventario', '📦 Inventario'], ['cortes', '💵 Cortes']] as [val, label] (val)}
+					{#each [['ventas', '🛒 Ventas'], ['inventario', '📦 Inventario'], ['movimientos', '🔁 Movimientos'], ['utilidad', '💰 Utilidad'], ['cortes', '💵 Cortes']] as [val, label] (val)}
 						<button
 							onclick={() => (tipo = val as typeof tipo)}
 							class="rounded-lg border px-3 py-2 text-sm font-medium transition {tipo === val ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}"

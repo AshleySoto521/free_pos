@@ -84,6 +84,9 @@
 			<h1 class="text-lg font-semibold text-slate-800">Categorías</h1>
 		</div>
 		<div class="flex gap-2">
+			<button onclick={() => goto(resolve('/datos'))} class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
+				📤 Importar / Exportar
+			</button>
 			<button onclick={() => (modalCatalogo = true)} class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
 				📚 Catálogo por giro
 			</button>

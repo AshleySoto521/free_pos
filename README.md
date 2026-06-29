@@ -1,8 +1,12 @@
 # AquaPOS
 
+**Versión 1.0.0**
+
 Punto de venta de escritorio para **comercios y negocios** (abarrotes, farmacia, refaccionaria, papelería, peluquería, etc.). App Windows (`.exe`) construida con **SvelteKit + Tauri**, base de datos **SQLite local** y **licenciamiento en Supabase**.
 
 > Documento técnico para desarrolladores. El manual de usuario está en [`MANUAL.md`](./MANUAL.md) y dentro de la app en **📖 Guía**.
+
+> **Versionado:** la versión se define en `src/lib/version.ts` (la que muestra el footer/Guía) y debe coincidir con `package.json`, `src-tauri/tauri.conf.json` (instalador/.exe) y `src-tauri/Cargo.toml`. SemVer `MAYOR.MENOR.PARCHE`.
 
 ---
 
@@ -88,17 +92,18 @@ aquapos/
 
 ## Funcionalidad
 
-- **Vender** — escaneo de código de barras, carrito, cliente o "Público en General", métodos de pago (efectivo con cambio, tarjeta/transferencia con referencia, fiado), **ticket térmico 80 mm** (imprimir o PDF). Requiere caja abierta.
+- **Vender** — escaneo de código de barras, carrito, cliente o "Público en General", métodos de pago (efectivo con cambio, tarjeta/transferencia con referencia, fiado), **divisa configurable** ("$100.00 MXN"), reloj en vivo, **ticket térmico 80 mm** (imprimir o PDF). Requiere caja abierta.
+- **Multi-giro** — vende **productos** (con inventario), **servicios** (sin inventario, ej. mano de obra) o **ambos**; el modo se elige en Configuración. Productos con **caducidad/lote** (farmacia).
 - **Corte de caja** — abrir/cerrar turno con **contador obligatorio de denominaciones**, ingresos/retiros, cuadre esperado vs contado.
-- **Inventario** — alta/edición de productos, activar/desactivar, ajuste de existencias (Entrada/Merma/Ajuste), alerta de stock bajo.
-- **Ventas** — historial + cierre por rango, detalle, **cancelar venta** (revierte inventario y fiado).
-- **Compras / Proveedores** — reabasto (suma inventario + actualiza costo), directorio CRUD.
-- **Clientes / Fiado** — CRUD, estado de cuenta (cargos/abonos), abonos.
+- **Inventario (costeo PEPS/FIFO)** — alta/edición; el **stock entra solo por Compras** (o carga inicial), no en el alta. Ajustes manuales: **Conteo físico** y **Merma** con **motivo obligatorio**; el stock encontrado toma el costo del último lote (o el que se indique) y la merma descuenta del lote más viejo. **Kardex valorizado** por producto (costo + saldo, exportable). Alerta de stock bajo. Lotes con caducidad y avisos por vencer.
+- **Ventas** — historial + cierre por rango, detalle, **cancelar venta** (revierte inventario —regresar/merma/descartar— y fiado).
+- **Compras / Proveedores** — reabasto que crea **capas de costo PEPS** y suma inventario; **candado anti-duplicados** (misma factura no se carga 2 veces, incluso sin folio); alta de varios productos a la vez e **importación de factura** (XLSX/CSV) con `PRECIOVENTA` opcional. `PrecioCosto` se actualiza solo como "último costo de referencia". Directorio de proveedores CRUD (teléfono obligatorio + email).
+- **Clientes / Fiado** — CRUD con **teléfono obligatorio y email**, estado de cuenta (cargos/abonos), abonos.
 - **Usuarios** — CRUD, roles, cambio de contraseña (Argon2), salvaguarda de "último admin".
-- **Catálogos** — categorías, unidades, métodos de pago, **monedas y denominaciones**, datos del negocio, importar/exportar.
-- **Reportes** — ventas/inventario/cortes en **XLSX, PDF o ambos**.
+- **Catálogos** — categorías, unidades, métodos de pago, **monedas y denominaciones**, datos del negocio, importar/exportar con **plantillas .csv descargables**.
+- **Reportes** — ventas/inventario/cortes + **utilidad (PEPS)** e **inventario valorizado**, en **XLSX, PDF o ambos**.
 - **Bitácora** — auditoría de acciones por usuario.
-- **Onboarding** — wizard (datos del negocio → catálogo por giro) + Guía imprimible.
+- **Onboarding** — wizard (datos del negocio → divisa → modo de venta → catálogo por giro) + Guía imprimible.
 - **Licencia** — prueba anclada al equipo + activación por clave.
 
 ### RBAC
@@ -114,13 +119,17 @@ Enforced en backend (`exigir_admin`), en el dashboard (tarjetas filtradas) y con
 
 `UnidadMedida`, `Categorias`, `Productos`, `Inventario`, `Usuarios`, `Clientes`,
 `Proveedores`, `MetodosPago`, `CortesCaja`, `MovimientosCaja`, `Ventas`,
-`Detalle_Ventas`, `Abonos`, `MovimientosInventario` (kardex), `Compras`,
-`Detalle_Compras`, `Configuracion` (llave-valor), `Bitacora`, `Monedas`,
-`Denominaciones`, `LicenciaLocal` (caché del token firmado).
+`Detalle_Ventas`, `Abonos`, `MovimientosInventario` (kardex), `Lotes` (caducidad),
+`CapasCosto` (motor PEPS/FIFO), `Compras`, `Detalle_Compras`,
+`Configuracion` (llave-valor), `Bitacora`, `Monedas`, `Denominaciones`,
+`LicenciaLocal` (caché del token firmado).
 
-- El esquema está en `scripts/posdb.sql` y **se embebe** en el binario vía `include_str!` (`db.rs`).
-- Tablas nuevas (`Bitacora`, `Monedas`, `Denominaciones`) se crean con `CREATE TABLE IF NOT EXISTS` en `db.rs` (migración para bases ya existentes).
-- Siembra inicial: unidades, métodos de pago, categorías comunes, Peso MXN + denominaciones.
+- El esquema está en `scripts/posdb.sql` y **se embebe** en el binario vía `include_str!` (`db.rs`); es la **fuente de verdad** de las bases nuevas.
+- Columnas clave: `Productos.Tipo` (Producto/Servicio), `ManejaCaducidad`, `SeVendePeso`; `Detalle_Ventas.CostoHistorico` (COGS PEPS); `MovimientosInventario.CostoUnitario`; `Clientes/Proveedores.Email`.
+- **PEPS/FIFO**: cada compra/carga crea una capa en `CapasCosto`; la venta consume la más vieja y guarda el costo en `Detalle_Ventas.CostoHistorico`. La existencia operativa vive en `Inventario`/`Lotes` (separada del costeo, para que un error de costo no afecte el stock).
+- **Trazabilidad**: `MovimientosInventario` tiene `CHECK` que **exige `Motivo`** en `Ajuste`/`Merma`.
+- Para bases ya existentes, `db.rs` aplica migraciones idempotentes (`CREATE TABLE IF NOT EXISTS`, `agregar_columna_si_falta`).
+- Siembra inicial: unidades, métodos de pago, Peso MXN + denominaciones (las categorías se eligen por giro en el onboarding).
 - **Fechas**: se guardan en UTC (`CURRENT_TIMESTAMP`); se filtran con `date(col,'localtime')` y se muestran en hora local (`format.ts`).
 
 ---
@@ -210,8 +219,14 @@ verifica con la llave pública embebida. La **prueba se ancla por `machine_id`**
 ## Importar / Exportar catálogos
 
 - Acepta `.xlsx` y `.csv`; detecta codificación (**UTF-8 o Latin-1**) para leer acentos correctamente (`xlsx.ts`).
-- Importables: productos, clientes, categorías, proveedores. Validan encabezados (MAYÚSCULAS), normalizan (trim + UPPERCASE), insertan parametrizado, son admin-only y quedan en bitácora.
-- Plantillas de ejemplo en `scripts/*.csv`.
+- **Plantillas .csv descargables** desde cada sección (botón "⬇️ Descargar plantilla"), con encabezados exactos + fila de ejemplo (BOM UTF-8 para Excel). Helper `descargarPlantillaCSV()`.
+- Validación en dos niveles: si **falta una columna obligatoria** o un **renglón viene incompleto**, se rechaza el archivo entero y se listan los errores (corregir en Excel y resubir). Todo es admin-only, parametrizado y queda en bitácora.
+- **Tres herramientas de productos** (Catálogos → Importar/Exportar), sin enciman­se:
+  - **Agregar productos (catálogo)** — alta masiva de productos nuevos con **0 existencia** (no toca stock ni PEPS). Cols: `PRODUCTO`, `PRECIOVENTA`, `PRECIOCOSTO`, `CATEGORIA`, `UNIDAD` (+ `CODIGOBARRAS`, `SEVENDEPESO`).
+  - **Iniciar inventario** — carga inicial al inaugurar: **resetea y siembra** existencia + capas PEPS. Añade `EXISTENCIA` a las columnas anteriores.
+  - **Actualizar precios** — cambia precios en masa sin tocar stock. Cols: `PRODUCTO`, `PRECIOVENTA` (+ `CODIGOBARRAS`, `PRECIOCOSTO`).
+- Otros importables: **clientes** (`NOMBRE`, `TELEFONO` obligatorios + `EMAIL`), **proveedores** (`PROVEEDOR`, `TELEFONO` obligatorios + `CONTACTO`, `EMAIL`), **categorías** (`CATEGORIA` + `DESCRIPCION`).
+- **Compras** importa la factura: `PRODUCTO`/`CODIGOBARRAS` + `PRECIOCOMPRA` + `CANTIDAD` (+ `PRECIOVENTA`, `LOTE`, `CADUCIDAD`). Si un producto no existe, **bloquea** el registro (no se crean productos desde compras).
 
 ---
 
@@ -228,4 +243,4 @@ verifica con la llave pública embebida. La **prueba se ancla por `machine_id`**
 
 Soporte técnico, compras o dudas: **contactoaquastudio@gmail.com**
 
-© Aqua Studio 2026 — Todos los derechos reservados
+© Aqua Studio 2026 — Todos los derechos reservados · AquaPOS v1.0.0

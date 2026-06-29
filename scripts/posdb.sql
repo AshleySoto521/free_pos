@@ -72,7 +72,8 @@ CREATE TABLE "Usuarios" (
 CREATE TABLE "Clientes" (
   "ID_Cliente" INTEGER PRIMARY KEY AUTOINCREMENT,
   "Nombre" TEXT NOT NULL,
-  "Telefono" TEXT,
+  "Telefono" TEXT NOT NULL,         -- obligatorio
+  "Email" TEXT,                     -- opcional
   "SaldoFiado" REAL DEFAULT 0.0,  -- cuánto debe a la fecha
   "Activo" INTEGER DEFAULT 1,
   "FechaCreacion" DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -83,7 +84,8 @@ CREATE TABLE "Proveedores" (
   "ID_Proveedor" INTEGER PRIMARY KEY AUTOINCREMENT,
   "Proveedor" TEXT NOT NULL,
   "Contacto" TEXT,
-  "Telefono" TEXT,
+  "Telefono" TEXT NOT NULL,         -- obligatorio
+  "Email" TEXT,                     -- opcional
   "Activo" INTEGER DEFAULT 1,
   "FechaCreacion" DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -157,6 +159,7 @@ CREATE TABLE "Detalle_Ventas" (
   "ID_Producto" INTEGER NOT NULL,
   "Cantidad" REAL NOT NULL,
   "PrecioVentaHistorico" REAL NOT NULL,   -- Respalda el precio del momento de la venta
+  "CostoHistorico" REAL DEFAULT 0,        -- Costo de venta (COGS PEPS) de esta línea
   FOREIGN KEY ("ID_Venta") REFERENCES "Ventas" ("ID_Venta") ON DELETE CASCADE,
   FOREIGN KEY ("ID_Producto") REFERENCES "Productos" ("ID_Producto")
 );
@@ -187,9 +190,37 @@ CREATE TABLE "MovimientosInventario" (
   "Motivo" TEXT,                          -- "Caducado", "Roto", "Ajuste conteo", etc.
   "ID_Usuario" INTEGER,
   "Fecha" DATETIME DEFAULT CURRENT_TIMESTAMP,
+  "CostoUnitario" REAL DEFAULT 0,         -- Costo del movimiento, para el kardex valorizado
+  -- El motivo es OBLIGATORIO en ajustes manuales y mermas (trazabilidad).
+  -- Venta/Entrada (compra) traen su motivo fijo, así que no se ven afectadas.
+  CHECK ("Tipo" NOT IN ('Ajuste','Merma') OR ("Motivo" IS NOT NULL AND TRIM("Motivo") <> '')),
   FOREIGN KEY ("ID_Producto") REFERENCES "Productos" ("ID_Producto"),
   FOREIGN KEY ("ID_Usuario") REFERENCES "Usuarios" ("ID_Usuario")
 );
+
+-- 14b. LOTES (caducidad/lote para farmacia; el stock vive por lote)
+CREATE TABLE "Lotes" (
+  "ID_Lote" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "ID_Producto" INTEGER NOT NULL,
+  "Lote" TEXT,
+  "Caducidad" TEXT,                       -- 'YYYY-MM-DD' (puede ser NULL)
+  "Cantidad" REAL NOT NULL DEFAULT 0,
+  "FechaCreacion" DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY ("ID_Producto") REFERENCES "Productos" ("ID_Producto")
+);
+CREATE INDEX IF NOT EXISTS idx_lotes_producto ON Lotes(ID_Producto);
+CREATE INDEX IF NOT EXISTS idx_lotes_caducidad ON Lotes(Caducidad);
+
+-- 14c. CAPAS DE COSTO (motor PEPS/FIFO: cada compra/alta crea una capa)
+CREATE TABLE "CapasCosto" (
+  "ID_Capa" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "ID_Producto" INTEGER NOT NULL,
+  "Cantidad" REAL NOT NULL,               -- cantidad restante en la capa
+  "CostoUnitario" REAL NOT NULL,
+  "Fecha" DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY ("ID_Producto") REFERENCES "Productos" ("ID_Producto")
+);
+CREATE INDEX IF NOT EXISTS idx_capas_producto ON CapasCosto(ID_Producto);
 
 -- 15. COMPRAS (cabecera del reabasto al proveedor)
 CREATE TABLE "Compras" (

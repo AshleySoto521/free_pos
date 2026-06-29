@@ -1,6 +1,6 @@
 [package]
 name = "aquapos"
-version = "0.0.1"
+version = "1.0.0"
 description = "POS para comercios y negocios"
 authors = ["Aqua Studio"]
 edition = "2021"

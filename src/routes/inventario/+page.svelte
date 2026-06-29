@@ -2,10 +2,11 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { api, type Producto, type Categoria, type UnidadMedida } from '$lib/api';
+	import { api, type Producto, type Categoria, type UnidadMedida, type KardexLinea } from '$lib/api';
 	import { session } from '$lib/stores/session';
 	import { modoVenta, giro, cargarAjustes } from '$lib/stores/ajustes';
-	import { pesos } from '$lib/format';
+	import { pesos, fechaHora } from '$lib/format';
+	import { exportarXLSX } from '$lib/xlsx';
 
 	// Título/etiquetas según lo que vende el negocio.
 	const titulo = $derived(
@@ -57,11 +58,59 @@
 	// --- Modal ajuste de existencia ---
 	let modalAjuste = $state(false);
 	let ajusteProd = $state<Producto | null>(null);
-	let tipoAjuste = $state<'Entrada' | 'Merma' | 'Ajuste'>('Entrada');
+	let tipoAjuste = $state<'Merma' | 'Ajuste'>('Ajuste');
 	let cantidadAjuste = $state<number | null>(null);
 	let motivoAjuste = $state('');
+	let costoAjuste = $state<number | null>(null);
 	let ajustando = $state(false);
 	let errorAjuste = $state('');
+	// Solo en conteo físico que SUBE la existencia importa el costo del stock encontrado.
+	const ajusteSube = $derived(
+		tipoAjuste === 'Ajuste' &&
+			ajusteProd != null &&
+			cantidadAjuste != null &&
+			cantidadAjuste > ajusteProd.existencia
+	);
+
+	// Motivos rápidos al dar de baja (merma) y al cuadrar el conteo físico.
+	const motivosBaja = ['Caducidad', 'Merma', 'Pérdida', 'Robo', 'Daño', 'Devolución a proveedor'];
+	const motivosConteo = ['Sobrante en conteo', 'Faltante en conteo', 'Error de captura', 'Producto encontrado'];
+	const motivosActuales = $derived(tipoAjuste === 'Merma' ? motivosBaja : motivosConteo);
+
+	// --- Modal historial / tracking del producto ---
+	let modalHist = $state(false);
+	let histProd = $state<Producto | null>(null);
+	let historial = $state<KardexLinea[]>([]);
+	let cargandoHist = $state(false);
+
+	async function abrirHistorial(p: Producto) {
+		histProd = p;
+		historial = [];
+		cargandoHist = true;
+		modalHist = true;
+		try {
+			historial = await api.kardexValorizado(p.idProducto);
+		} finally {
+			cargandoHist = false;
+		}
+	}
+
+	function exportarKardex() {
+		if (!histProd) return;
+		exportarXLSX(
+			`kardex_${histProd.producto}`,
+			['FECHA', 'CONCEPTO', 'ENTRADA', 'SALIDA', 'COSTO UNIT', 'SALDO CANT', 'SALDO VALOR'],
+			historial.map((k) => [
+				fechaHora(k.fecha),
+				k.concepto,
+				k.cantidad > 0 ? k.cantidad : '',
+				k.cantidad < 0 ? -k.cantidad : '',
+				Number(k.costoUnitario.toFixed(2)),
+				Number(k.saldoCantidad.toFixed(2)),
+				Number(k.saldoValor.toFixed(2))
+			])
+		);
+	}
 
 	onMount(() => {
 		if ($session?.rol !== 'Administrador') {
@@ -196,9 +245,10 @@
 
 	function abrirAjuste(p: Producto) {
 		ajusteProd = p;
-		tipoAjuste = 'Entrada';
+		tipoAjuste = 'Ajuste';
 		cantidadAjuste = null;
 		motivoAjuste = '';
+		costoAjuste = null;
 		errorAjuste = '';
 		modalAjuste = true;
 	}
@@ -206,6 +256,10 @@
 	async function guardarAjuste() {
 		if (!ajusteProd || cantidadAjuste == null || cantidadAjuste < 0) {
 			errorAjuste = 'Escribe una cantidad válida.';
+			return;
+		}
+		if (!motivoAjuste.trim()) {
+			errorAjuste = 'El motivo es obligatorio (para saber por qué cambió el stock).';
 			return;
 		}
 		ajustando = true;
@@ -216,7 +270,8 @@
 				tipoAjuste,
 				cantidadAjuste,
 				motivoAjuste.trim() || null,
-				$session?.idUsuario ?? null
+				$session?.idUsuario ?? null,
+				ajusteSube && costoAjuste != null && costoAjuste > 0 ? costoAjuste : null
 			);
 			await cargar();
 			modalAjuste = false;
@@ -239,6 +294,9 @@
 			<h1 class="text-lg font-semibold text-slate-800">{titulo}</h1>
 		</div>
 		<div class="flex gap-2">
+			<button onclick={() => goto(resolve('/datos'))} class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
+				📤 Importar / Exportar
+			</button>
 			<button onclick={() => goto(resolve('/categorias'))} class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
 				Categorías
 			</button>
@@ -305,6 +363,7 @@
 								</td>
 								<td class="px-4 py-2.5 text-right whitespace-nowrap">
 									{#if p.tipo !== 'Servicio'}
+										<button onclick={() => abrirHistorial(p)} class="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">Historial</button>
 										<button onclick={() => abrirAjuste(p)} class="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">Ajustar</button>
 									{/if}
 									<button onclick={() => abrirEditar(p)} class="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100">Editar</button>
@@ -352,10 +411,16 @@
 						<label for="pv" class="mb-1 block text-sm font-medium text-slate-700">Precio de venta</label>
 						<input id="pv" type="number" step="0.01" min="0" bind:value={precioUnitario} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
 					</div>
-					<div>
-						<label for="pc" class="mb-1 block text-sm font-medium text-slate-700">Precio de costo</label>
-						<input id="pc" type="number" step="0.01" min="0" bind:value={precioCosto} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-					</div>
+					{#if editandoId == null}
+						<div>
+							<label for="pc" class="mb-1 block text-sm font-medium text-slate-700">Precio de costo (inicial)</label>
+							<input id="pc" type="number" step="0.01" min="0" bind:value={precioCosto} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+						</div>
+					{:else}
+						<div class="flex items-end">
+							<p class="text-xs text-slate-400">El costo se actualiza desde <strong>Compras</strong> (PEPS).</p>
+						</div>
+					{/if}
 				</div>
 
 				<div class="grid grid-cols-2 gap-3">
@@ -392,31 +457,15 @@
 						🗓️ Maneja caducidad y lote (farmacia)
 					</label>
 
-					<div class="grid grid-cols-2 gap-3">
-						<div>
-							<label for="si" class="mb-1 block text-sm font-medium text-slate-700">Stock mínimo</label>
-							<input id="si" type="number" step="0.01" min="0" bind:value={stockMinimo} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-						</div>
-						{#if editandoId == null}
-							<div>
-								<label for="ei" class="mb-1 block text-sm font-medium text-slate-700">Existencia inicial</label>
-								<input id="ei" type="number" step="0.01" min="0" bind:value={existenciaInicial} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-							</div>
-						{/if}
+					<div>
+						<label for="si" class="mb-1 block text-sm font-medium text-slate-700">Stock mínimo (alerta de "se está acabando")</label>
+						<input id="si" type="number" step="0.01" min="0" bind:value={stockMinimo} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
 					</div>
+					{#if editandoId == null}
+						<p class="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">📦 El producto se crea con <strong>0 existencia</strong>. El stock entra por <strong>Compras</strong> (o por <strong>Importar productos</strong> si estás cargando tu inventario inicial).</p>
+					{/if}
 
-					{#if manejaCaducidad && editandoId == null}
-						<div class="grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-3">
-							<div>
-								<label for="li" class="mb-1 block text-sm font-medium text-slate-700">Lote inicial (opcional)</label>
-								<input id="li" bind:value={loteInicial} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-							</div>
-							<div>
-								<label for="ci" class="mb-1 block text-sm font-medium text-slate-700">Caducidad</label>
-								<input id="ci" type="date" bind:value={caducidadInicial} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-							</div>
-						</div>
-					{:else if manejaCaducidad}
+					{#if manejaCaducidad}
 						<p class="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
 							El stock se lleva por <strong>lotes</strong>. Agrega lotes con su caducidad desde <strong>Compras</strong> o con el botón <strong>Ajustar</strong>.
 						</p>
@@ -466,6 +515,60 @@
 	</div>
 {/if}
 
+<!-- Modal kardex valorizado (PEPS) del producto -->
+{#if modalHist && histProd}
+	<div class="fixed inset-0 z-10 flex items-start justify-center overflow-y-auto bg-black/40 p-4">
+		<div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
+			<div class="mb-3 flex items-center justify-between">
+				<div>
+					<h2 class="text-lg font-semibold text-slate-800">Kardex valorizado (PEPS)</h2>
+					<p class="text-sm text-slate-500">{histProd.producto}</p>
+				</div>
+				<div class="flex items-center gap-2">
+					{#if historial.length > 0}
+						<button onclick={exportarKardex} class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">📥 Exportar</button>
+					{/if}
+					<button onclick={() => (modalHist = false)} class="text-slate-400 hover:text-slate-600" aria-label="Cerrar">✕</button>
+				</div>
+			</div>
+			{#if cargandoHist}
+				<p class="py-8 text-center text-sm text-slate-400">Cargando…</p>
+			{:else if historial.length === 0}
+				<p class="py-8 text-center text-sm text-slate-400">Sin movimientos registrados.</p>
+			{:else}
+				<div class="overflow-x-auto rounded-lg border border-slate-200">
+					<table class="w-full text-xs">
+						<thead class="bg-slate-50 text-left uppercase tracking-wide text-slate-500">
+							<tr>
+								<th class="px-2 py-2 font-medium">Fecha</th>
+								<th class="px-2 py-2 font-medium">Concepto</th>
+								<th class="px-2 py-2 text-right font-medium">Entra</th>
+								<th class="px-2 py-2 text-right font-medium">Sale</th>
+								<th class="px-2 py-2 text-right font-medium">Costo u.</th>
+								<th class="px-2 py-2 text-right font-medium">Saldo</th>
+								<th class="px-2 py-2 text-right font-medium">Valor</th>
+							</tr>
+						</thead>
+						<tbody class="divide-y divide-slate-100">
+							{#each historial as k, i (i)}
+								<tr>
+									<td class="px-2 py-1.5 whitespace-nowrap text-slate-500">{fechaHora(k.fecha)}</td>
+									<td class="px-2 py-1.5 text-slate-700">{k.concepto}</td>
+									<td class="px-2 py-1.5 text-right text-green-600">{k.cantidad > 0 ? k.cantidad : ''}</td>
+									<td class="px-2 py-1.5 text-right text-red-600">{k.cantidad < 0 ? -k.cantidad : ''}</td>
+									<td class="px-2 py-1.5 text-right text-slate-500">{pesos(k.costoUnitario)}</td>
+									<td class="px-2 py-1.5 text-right font-medium text-slate-700">{k.saldoCantidad}</td>
+									<td class="px-2 py-1.5 text-right font-medium text-slate-800">{pesos(k.saldoValor)}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</div>
+	</div>
+{/if}
+
 <!-- Modal ajuste de existencia -->
 {#if modalAjuste && ajusteProd}
 	<div class="fixed inset-0 z-10 flex items-start justify-center overflow-y-auto bg-black/40 p-4">
@@ -473,22 +576,35 @@
 			<h2 class="mb-1 text-base font-semibold text-slate-800">Ajustar existencia</h2>
 			<p class="mb-3 text-sm text-slate-500">{ajusteProd.producto} · actual: <strong>{ajusteProd.existencia}</strong></p>
 
-			<div class="mb-3 grid grid-cols-3 gap-1.5">
-				{#each ['Entrada', 'Merma', 'Ajuste'] as t (t)}
+			<div class="mb-3 grid grid-cols-2 gap-1.5">
+				{#each [['Ajuste', '📋 Conteo físico'], ['Merma', '🗑️ Merma / Baja']] as [val, label] (val)}
 					<button
-						onclick={() => (tipoAjuste = t as 'Entrada' | 'Merma' | 'Ajuste')}
-						class="rounded-lg border px-2 py-1.5 text-xs font-medium {tipoAjuste === t ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}"
+						onclick={() => (tipoAjuste = val as 'Merma' | 'Ajuste')}
+						class="rounded-lg border px-2 py-1.5 text-xs font-medium {tipoAjuste === val ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}"
 					>
-						{t}
+						{label}
 					</button>
 				{/each}
 			</div>
 
 			<label for="ca" class="mb-1 block text-sm font-medium text-slate-700">
-				{tipoAjuste === 'Ajuste' ? 'Existencia real (conteo)' : 'Cantidad'}
+				{tipoAjuste === 'Ajuste' ? 'Existencia real (conteo físico)' : 'Cantidad a dar de baja'}
 			</label>
 			<input id="ca" type="number" step="0.01" min="0" bind:value={cantidadAjuste} class="mb-2 w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-			<input bind:value={motivoAjuste} placeholder="Motivo (opcional)" class="mb-3 w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+			{#if motivosActuales.length}
+					<div class="mb-2 flex flex-wrap gap-1.5">
+						{#each motivosActuales as mb (mb)}
+							<button type="button" onclick={() => (motivoAjuste = mb)} class="rounded-full border px-2.5 py-0.5 text-xs {motivoAjuste === mb ? 'border-indigo-400 bg-indigo-50 text-indigo-700' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}">{mb}</button>
+						{/each}
+					</div>
+				{/if}
+				<input bind:value={motivoAjuste} placeholder="Motivo (obligatorio)" required class="mb-2 w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+				{#if ajusteSube}
+					<label for="cax" class="mb-1 block text-sm font-medium text-slate-700">Costo unitario del stock encontrado</label>
+					<input id="cax" type="number" step="0.01" min="0" bind:value={costoAjuste} placeholder="Vacío = último costo conocido" class="mb-1 w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+					<p class="mb-2 text-xs text-slate-400">Vas a <strong>sumar {(cantidadAjuste ?? 0) - ajusteProd.existencia}</strong>. Si lo dejas vacío, se usa el costo del último lote.</p>
+				{/if}
+				<p class="mb-3 text-xs text-slate-400">💡 Para <strong>reabastecer</strong> (con el costo del proveedor) usa <strong>Compras</strong>, no este ajuste.</p>
 
 			{#if errorAjuste}
 				<p class="mb-2 text-sm text-red-700">{errorAjuste}</p>

@@ -584,9 +584,10 @@ pub fn listar_productos(
                     CASE WHEN p.ManejaCaducidad = 1
                      THEN COALESCE((SELECT SUM(l.Cantidad) FROM Lotes l WHERE l.ID_Producto = p.ID_Producto), 0)
                      ELSE COALESCE(i.Cantidad, 0) END,
-                p.Activo, p.ID_UnidadMedida, p.Tipo, p.ManejaCaducidad
+                p.Activo, p.ID_UnidadMedida, p.Tipo, p.ManejaCaducidad, um.UnidadMedida
              FROM Productos p
              LEFT JOIN Categorias c ON c.ID_Categoria = p.ID_Categoria
+             LEFT JOIN UnidadMedida um ON um.ID_UnidadMedida = p.ID_UnidadMedida
              LEFT JOIN Inventario i ON i.ID_Producto = p.ID_Producto
              WHERE (?1 = 1 OR p.Activo = 1)
              ORDER BY p.Producto",
@@ -613,9 +614,10 @@ pub fn buscar_producto_por_codigo(
                 CASE WHEN p.ManejaCaducidad = 1
                      THEN COALESCE((SELECT SUM(l.Cantidad) FROM Lotes l WHERE l.ID_Producto = p.ID_Producto), 0)
                      ELSE COALESCE(i.Cantidad, 0) END,
-                p.Activo, p.ID_UnidadMedida, p.Tipo, p.ManejaCaducidad
+                p.Activo, p.ID_UnidadMedida, p.Tipo, p.ManejaCaducidad, um.UnidadMedida
          FROM Productos p
          LEFT JOIN Categorias c ON c.ID_Categoria = p.ID_Categoria
+         LEFT JOIN UnidadMedida um ON um.ID_UnidadMedida = p.ID_UnidadMedida
          LEFT JOIN Inventario i ON i.ID_Producto = p.ID_Producto
          WHERE p.CodigoBarras = ?1 AND p.Activo = 1",
         [codigo],
@@ -673,9 +675,9 @@ pub fn crear_producto(
                     datos.existencia_inicial,
                 )?;
                 tx.execute(
-                    "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo)
-                     VALUES (?1, 'Entrada', ?2, 'Alta de producto')",
-                    params![id, datos.existencia_inicial],
+                    "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, CostoUnitario)
+                     VALUES (?1, 'Entrada', ?2, 'Alta de producto', ?3)",
+                    params![id, datos.existencia_inicial, datos.precio_costo],
                 )
                 .map_err(|e| e.to_string())?;
             }
@@ -689,13 +691,18 @@ pub fn crear_producto(
 
             if datos.existencia_inicial != 0.0 {
                 tx.execute(
-                    "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo)
-                     VALUES (?1, 'Entrada', ?2, 'Alta de producto')",
-                    params![id, datos.existencia_inicial],
+                    "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, CostoUnitario)
+                     VALUES (?1, 'Entrada', ?2, 'Alta de producto', ?3)",
+                    params![id, datos.existencia_inicial, datos.precio_costo],
                 )
                 .map_err(|e| e.to_string())?;
             }
         }
+    }
+
+    // Capa de costo PEPS de la existencia inicial (al precio de costo capturado).
+    if !es_servicio && datos.existencia_inicial > 0.0 {
+        agregar_capa(&tx, id, datos.existencia_inicial, datos.precio_costo)?;
     }
 
     tx.commit().map_err(|e| e.to_string())?;
@@ -793,10 +800,18 @@ pub fn registrar_venta(
 
     // 3) Detalle + descuento de inventario + kardex
     for (id_producto, cantidad, precio, es_servicio, maneja_cad) in lineas {
+        // Costo de venta PEPS de esta línea (consume las capas más antiguas).
+        // Servicios = 0 (no manejan inventario ni costo).
+        let costo_linea = if es_servicio {
+            0.0
+        } else {
+            consumir_capas_fifo(&tx, id_producto, cantidad)?
+        };
         tx.execute(
-            "INSERT INTO Detalle_Ventas (ID_Venta, ID_Producto, Cantidad, PrecioVentaHistorico)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![id_venta, id_producto, cantidad, precio],
+            "INSERT INTO Detalle_Ventas
+                (ID_Venta, ID_Producto, Cantidad, PrecioVentaHistorico, CostoHistorico)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id_venta, id_producto, cantidad, precio, costo_linea],
         )
         .map_err(|e| e.to_string())?;
 
@@ -826,9 +841,14 @@ pub fn registrar_venta(
         }
 
         tx.execute(
-            "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario)
-             VALUES (?1, 'Venta', ?2, 'Venta', ?3)",
-            params![id_producto, -cantidad, venta.id_usuario],
+            "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario, CostoUnitario)
+             VALUES (?1, 'Venta', ?2, 'Venta', ?3, ?4)",
+            params![
+                id_producto,
+                -cantidad,
+                venta.id_usuario,
+                if cantidad > 0.0 { costo_linea / cantidad } else { 0.0 }
+            ],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -906,23 +926,25 @@ pub fn cancelar_venta(
     }
 
     // Disposición de cada producto (los servicios no manejan stock).
-    let lineas: Vec<(i64, f64, String, i64)> = {
+    let lineas: Vec<(i64, f64, String, i64, f64)> = {
         let mut stmt = tx
             .prepare(
                 "SELECT dv.ID_Producto, dv.Cantidad, COALESCE(p.Tipo, 'Producto'),
-                        COALESCE(p.ManejaCaducidad, 0)
+                        COALESCE(p.ManejaCaducidad, 0), COALESCE(dv.CostoHistorico, 0)
                  FROM Detalle_Ventas dv
                  LEFT JOIN Productos p ON p.ID_Producto = dv.ID_Producto
                  WHERE dv.ID_Venta = ?1",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map([id_venta], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .query_map([id_venta], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })
             .map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())?
     };
 
-    for (id_prod, cant, tipo, maneja) in &lineas {
+    for (id_prod, cant, tipo, maneja, costo_hist) in &lineas {
         if tipo.eq_ignore_ascii_case("Servicio") {
             continue; // los servicios no afectan inventario
         }
@@ -931,10 +953,11 @@ pub fn cancelar_venta(
             "regresar" if maneja_cad => {
                 // Reingresa a un lote (sin caducidad; el admin la ajusta si aplica).
                 agregar_lote(&tx, *id_prod, None, None, *cant)?;
+                agregar_capa(&tx, *id_prod, *cant, if *cant > 0.0 { *costo_hist / *cant } else { 0.0 })?;
                 tx.execute(
-                    "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario)
-                     VALUES (?1, 'Entrada', ?2, 'Devolución por cancelación', ?3)",
-                    params![id_prod, cant, id_usuario],
+                    "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario, CostoUnitario)
+                     VALUES (?1, 'Entrada', ?2, 'Devolución por cancelación', ?3, ?4)",
+                    params![id_prod, cant, id_usuario, if *cant > 0.0 { *costo_hist / *cant } else { 0.0 }],
                 )
                 .map_err(|e| e.to_string())?;
             }
@@ -951,10 +974,11 @@ pub fn cancelar_venta(
                     params![cant, id_prod],
                 )
                 .map_err(|e| e.to_string())?;
+                agregar_capa(&tx, *id_prod, *cant, if *cant > 0.0 { *costo_hist / *cant } else { 0.0 })?;
                 tx.execute(
-                    "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario)
-                     VALUES (?1, 'Entrada', ?2, 'Devolución por cancelación', ?3)",
-                    params![id_prod, cant, id_usuario],
+                    "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario, CostoUnitario)
+                     VALUES (?1, 'Entrada', ?2, 'Devolución por cancelación', ?3, ?4)",
+                    params![id_prod, cant, id_usuario, if *cant > 0.0 { *costo_hist / *cant } else { 0.0 }],
                 )
                 .map_err(|e| e.to_string())?;
             }
@@ -963,15 +987,15 @@ pub fn cancelar_venta(
                 // documenta con dos asientos que se netean: reverso de la venta
                 // y baja por merma. El stock queda igual (descontado).
                 tx.execute(
-                    "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario)
-                     VALUES (?1, 'Entrada', ?2, 'Reverso por cancelación', ?3)",
-                    params![id_prod, cant, id_usuario],
+                    "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario, CostoUnitario)
+                     VALUES (?1, 'Entrada', ?2, 'Reverso por cancelación', ?3, ?4)",
+                    params![id_prod, cant, id_usuario, if *cant > 0.0 { *costo_hist / *cant } else { 0.0 }],
                 )
                 .map_err(|e| e.to_string())?;
                 tx.execute(
-                    "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario)
-                     VALUES (?1, 'Merma', ?2, 'Merma por cancelación', ?3)",
-                    params![id_prod, -cant, id_usuario],
+                    "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario, CostoUnitario)
+                     VALUES (?1, 'Merma', ?2, 'Merma por cancelación', ?3, ?4)",
+                    params![id_prod, -cant, id_usuario, if *cant > 0.0 { *costo_hist / *cant } else { 0.0 }],
                 )
                 .map_err(|e| e.to_string())?;
             }
@@ -1196,29 +1220,62 @@ pub fn importar_productos(
             _ => None,
         };
 
+        // Unidad de medida por nombre; si no viene en el archivo, "Pieza".
+        // Así nunca queda en NULL. Se crea la unidad si no existe (como categoría).
+        let unidad_nombre = f
+            .unidad
+            .as_ref()
+            .map(|u| norm(u))
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| norm("Pieza"));
+        let id_uni: i64 = {
+            let found: Option<i64> = tx
+                .query_row(
+                    "SELECT ID_UnidadMedida FROM UnidadMedida WHERE UPPER(UnidadMedida) = ?1",
+                    [&unidad_nombre],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            match found {
+                Some(id) => id,
+                None => {
+                    tx.execute(
+                        "INSERT INTO UnidadMedida (UnidadMedida) VALUES (?1)",
+                        [&unidad_nombre],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    tx.last_insert_rowid()
+                }
+            }
+        };
+
         let res = tx.execute(
-            "INSERT INTO Productos (Producto, CodigoBarras, PrecioUnitario, PrecioCosto, ID_Categoria)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![nombre, codigo, f.precio_venta, f.precio_costo.unwrap_or(0.0), id_cat],
+            "INSERT INTO Productos
+                (Producto, CodigoBarras, PrecioUnitario, PrecioCosto, ID_Categoria, ID_UnidadMedida, SeVendePeso)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                nombre,
+                codigo,
+                f.precio_venta,
+                f.precio_costo.unwrap_or(0.0),
+                id_cat,
+                id_uni,
+                f.se_vende_peso.unwrap_or(false) as i64
+            ],
         );
 
         match res {
             Ok(_) => {
                 let id = tx.last_insert_rowid();
-                let exist = f.existencia.unwrap_or(0.0);
+                // Catálogo: el producto nace con 0 existencia. El stock entra por
+                // Compras. NO se crea capa PEPS aquí para no chocar con el costeo
+                // ni duplicar inventario (ideal para dar de alta productos nuevos).
                 tx.execute(
-                    "INSERT INTO Inventario (ID_Producto, Cantidad) VALUES (?1, ?2)",
-                    params![id, exist],
+                    "INSERT INTO Inventario (ID_Producto, Cantidad) VALUES (?1, 0)",
+                    [id],
                 )
                 .map_err(|e| e.to_string())?;
-                if exist != 0.0 {
-                    tx.execute(
-                        "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo)
-                         VALUES (?1, 'Entrada', ?2, 'Importación')",
-                        params![id, exist],
-                    )
-                    .map_err(|e| e.to_string())?;
-                }
                 insertados += 1;
             }
             Err(e) => {
@@ -1241,6 +1298,318 @@ pub fn importar_productos(
         "Producto",
         None,
         &format!("{insertados} productos importados, {omitidos} omitidos"),
+    );
+    Ok(ResultadoImport {
+        insertados,
+        omitidos,
+        errores,
+    })
+}
+
+/// Carga inicial de inventario ("al inaugurar"). A diferencia de `importar_productos`,
+/// busca el producto por código o nombre, y si ya existe lo REUTILIZA. En todos los
+/// casos RESETEA el stock de cada producto del archivo (borra sus capas, lotes y
+/// movimientos de "Inventario inicial") y lo vuelve a sembrar con la existencia y el
+/// costo del CSV. Es idempotente: re-correr el mismo archivo deja el mismo resultado.
+/// NO toca productos que no estén en el archivo.
+#[tauri::command]
+pub fn iniciar_inventario(
+    pool: State<Db>,
+    sesion: State<Sesion>,
+    filas: Vec<FilaProductoImport>,
+) -> Result<ResultadoImport, String> {
+    exigir_admin(&sesion)?;
+    let mut conn = pool.get().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    let mut insertados = 0i64;
+    let mut omitidos = 0i64;
+    let mut errores: Vec<String> = Vec::new();
+
+    for (i, f) in filas.iter().enumerate() {
+        let renglon = i + 2;
+        let nombre = norm(&f.producto);
+        if nombre.is_empty() {
+            omitidos += 1;
+            errores.push(format!("Fila {renglon}: nombre vacío"));
+            continue;
+        }
+        if f.precio_venta < 0.0 || f.precio_costo.unwrap_or(0.0) < 0.0 {
+            omitidos += 1;
+            errores.push(format!("Fila {renglon}: precio negativo"));
+            continue;
+        }
+
+        let codigo: Option<String> = f
+            .codigo_barras
+            .as_ref()
+            .map(|c| norm(c))
+            .filter(|c| !c.is_empty());
+
+        // Categoría por nombre (se crea si no existe)
+        let id_cat: Option<i64> = match &f.categoria {
+            Some(c) if !c.trim().is_empty() => {
+                let cn = norm(c);
+                let found: Option<i64> = tx
+                    .query_row(
+                        "SELECT ID_Categoria FROM Categorias WHERE UPPER(Categoria) = ?1",
+                        [&cn],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .map_err(|e| e.to_string())?;
+                match found {
+                    Some(id) => Some(id),
+                    None => {
+                        tx.execute("INSERT INTO Categorias (Categoria) VALUES (?1)", [&cn])
+                            .map_err(|e| e.to_string())?;
+                        Some(tx.last_insert_rowid())
+                    }
+                }
+            }
+            _ => None,
+        };
+
+        // Unidad (se crea si no existe; por defecto "Pieza")
+        let unidad_nombre = f
+            .unidad
+            .as_ref()
+            .map(|u| norm(u))
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| norm("Pieza"));
+        let id_uni: i64 = {
+            let found: Option<i64> = tx
+                .query_row(
+                    "SELECT ID_UnidadMedida FROM UnidadMedida WHERE UPPER(UnidadMedida) = ?1",
+                    [&unidad_nombre],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            match found {
+                Some(id) => id,
+                None => {
+                    tx.execute(
+                        "INSERT INTO UnidadMedida (UnidadMedida) VALUES (?1)",
+                        [&unidad_nombre],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    tx.last_insert_rowid()
+                }
+            }
+        };
+
+        // ¿El producto ya existe? (por código o por nombre)
+        let id_existente: Option<i64> = tx
+            .query_row(
+                "SELECT ID_Producto FROM Productos
+                 WHERE UPPER(Producto) = ?1 OR (?2 IS NOT NULL AND CodigoBarras = ?2)",
+                params![nombre, codigo],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+
+        let id = match id_existente {
+            Some(id) => {
+                tx.execute(
+                    "UPDATE Productos SET PrecioUnitario = ?1, PrecioCosto = ?2,
+                        ID_Categoria = COALESCE(?3, ID_Categoria), ID_UnidadMedida = ?4,
+                        SeVendePeso = COALESCE(?5, SeVendePeso)
+                     WHERE ID_Producto = ?6",
+                    params![
+                        f.precio_venta,
+                        f.precio_costo.unwrap_or(0.0),
+                        id_cat,
+                        id_uni,
+                        f.se_vende_peso.map(|b| b as i64),
+                        id
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+                id
+            }
+            None => {
+                let res = tx.execute(
+                    "INSERT INTO Productos
+                        (Producto, CodigoBarras, PrecioUnitario, PrecioCosto, ID_Categoria, ID_UnidadMedida, SeVendePeso)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        nombre,
+                        codigo,
+                        f.precio_venta,
+                        f.precio_costo.unwrap_or(0.0),
+                        id_cat,
+                        id_uni,
+                        f.se_vende_peso.unwrap_or(false) as i64
+                    ],
+                );
+                match res {
+                    Ok(_) => tx.last_insert_rowid(),
+                    Err(e) => {
+                        omitidos += 1;
+                        let msg = if e.to_string().contains("UNIQUE") {
+                            "código de barras duplicado".to_string()
+                        } else {
+                            e.to_string()
+                        };
+                        errores.push(format!("Fila {renglon} ({nombre}): {msg}"));
+                        continue;
+                    }
+                }
+            }
+        };
+
+        // RESET del stock de ESTE producto (solo lo que está en el archivo)
+        tx.execute("DELETE FROM CapasCosto WHERE ID_Producto = ?1", [id])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM Lotes WHERE ID_Producto = ?1", [id])
+            .map_err(|e| e.to_string())?;
+        tx.execute(
+            "DELETE FROM MovimientosInventario WHERE ID_Producto = ?1 AND Motivo = 'Inventario inicial'",
+            [id],
+        )
+        .map_err(|e| e.to_string())?;
+
+        let exist = f.existencia.unwrap_or(0.0).max(0.0);
+        let costo = f.precio_costo.unwrap_or(0.0);
+        let maneja: i64 = tx
+            .query_row(
+                "SELECT ManejaCaducidad FROM Productos WHERE ID_Producto = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        if maneja != 0 {
+            // Caducidad: el stock vive en lotes; Inventario queda en 0.
+            tx.execute(
+                "INSERT INTO Inventario (ID_Producto, Cantidad) VALUES (?1, 0)
+                 ON CONFLICT(ID_Producto) DO UPDATE SET Cantidad = 0",
+                [id],
+            )
+            .map_err(|e| e.to_string())?;
+            if exist > 0.0 {
+                agregar_lote(&tx, id, None, None, exist)?;
+            }
+        } else {
+            tx.execute(
+                "INSERT INTO Inventario (ID_Producto, Cantidad) VALUES (?1, ?2)
+                 ON CONFLICT(ID_Producto) DO UPDATE SET Cantidad = ?2",
+                params![id, exist],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        if exist > 0.0 {
+            agregar_capa(&tx, id, exist, costo)?;
+            tx.execute(
+                "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, CostoUnitario)
+                 VALUES (?1, 'Entrada', ?2, 'Inventario inicial', ?3)",
+                params![id, exist, costo],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        insertados += 1;
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    bitacora(
+        &pool,
+        &sesion,
+        "Inventario inicial",
+        "Producto",
+        None,
+        &format!("{insertados} productos cargados, {omitidos} omitidos"),
+    );
+    Ok(ResultadoImport {
+        insertados,
+        omitidos,
+        errores,
+    })
+}
+
+/// Actualiza precios en masa desde un CSV/XLSX, SIN tocar existencias ni PEPS.
+/// Empata por código de barras o por nombre. Cambia PrecioUnitario (venta) y, si el
+/// archivo trae PRECIOCOSTO, también el costo de referencia. Los productos que no
+/// existen se reportan (no se crean: para altas usa "Importar productos").
+#[tauri::command]
+pub fn actualizar_precios(
+    pool: State<Db>,
+    sesion: State<Sesion>,
+    filas: Vec<FilaProductoImport>,
+) -> Result<ResultadoImport, String> {
+    exigir_admin(&sesion)?;
+    let mut conn = pool.get().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    let mut insertados = 0i64; // aquí = actualizados
+    let mut omitidos = 0i64;
+    let mut errores: Vec<String> = Vec::new();
+
+    for (i, f) in filas.iter().enumerate() {
+        let renglon = i + 2;
+        let nombre = norm(&f.producto);
+        if nombre.is_empty() {
+            omitidos += 1;
+            errores.push(format!("Fila {renglon}: nombre vacío"));
+            continue;
+        }
+        if f.precio_venta < 0.0 {
+            omitidos += 1;
+            errores.push(format!("Fila {renglon} ({nombre}): PRECIOVENTA inválido"));
+            continue;
+        }
+        let codigo: Option<String> = f
+            .codigo_barras
+            .as_ref()
+            .map(|c| norm(c))
+            .filter(|c| !c.is_empty());
+        let id: Option<i64> = tx
+            .query_row(
+                "SELECT ID_Producto FROM Productos
+                 WHERE UPPER(Producto) = ?1 OR (?2 IS NOT NULL AND CodigoBarras = ?2)",
+                params![nombre, codigo],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        match id {
+            Some(id) => {
+                match f.precio_costo {
+                    Some(c) if c >= 0.0 => {
+                        tx.execute(
+                            "UPDATE Productos SET PrecioUnitario = ?1, PrecioCosto = ?2
+                             WHERE ID_Producto = ?3",
+                            params![f.precio_venta, c, id],
+                        )
+                        .map_err(|e| e.to_string())?;
+                    }
+                    _ => {
+                        tx.execute(
+                            "UPDATE Productos SET PrecioUnitario = ?1 WHERE ID_Producto = ?2",
+                            params![f.precio_venta, id],
+                        )
+                        .map_err(|e| e.to_string())?;
+                    }
+                }
+                insertados += 1;
+            }
+            None => {
+                omitidos += 1;
+                errores.push(format!("Fila {renglon} ({nombre}): no existe (no se creó)"));
+            }
+        }
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    bitacora(
+        &pool,
+        &sesion,
+        "Actualización precios",
+        "Producto",
+        None,
+        &format!("{insertados} precios actualizados, {omitidos} no encontrados"),
     );
     Ok(ResultadoImport {
         insertados,
@@ -1347,14 +1716,27 @@ pub fn importar_proveedores(
             .as_ref()
             .map(|c| c.trim().to_string())
             .filter(|c| !c.is_empty());
-        let tel = f
+        let tel = match f
             .telefono
             .as_ref()
             .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty());
+            .filter(|t| !t.is_empty())
+        {
+            Some(t) => t,
+            None => {
+                omitidos += 1;
+                errores.push(format!("Fila {} ({nombre}): falta TELEFONO", i + 2));
+                continue;
+            }
+        };
+        let email = f
+            .email
+            .as_ref()
+            .map(|e| e.trim().to_string())
+            .filter(|e| !e.is_empty());
         tx.execute(
-            "INSERT INTO Proveedores (Proveedor, Contacto, Telefono) VALUES (?1, ?2, ?3)",
-            params![nombre, contacto, tel],
+            "INSERT INTO Proveedores (Proveedor, Contacto, Telefono, Email) VALUES (?1, ?2, ?3, ?4)",
+            params![nombre, contacto, tel, email],
         )
         .map_err(|e| e.to_string())?;
         insertados += 1;
@@ -1398,16 +1780,29 @@ pub fn importar_clientes(
             errores.push(format!("Fila {renglon}: nombre vacío"));
             continue;
         }
-        // El teléfono se recorta pero no se pasa a mayúsculas (son dígitos).
-        let tel: Option<String> = f
+        // El teléfono es obligatorio; se recorta pero no se pasa a mayúsculas (son dígitos).
+        let tel: String = match f
             .telefono
             .as_ref()
             .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty());
+            .filter(|t| !t.is_empty())
+        {
+            Some(t) => t,
+            None => {
+                omitidos += 1;
+                errores.push(format!("Fila {renglon} ({nombre}): falta TELEFONO"));
+                continue;
+            }
+        };
+        let email = f
+            .email
+            .as_ref()
+            .map(|e| e.trim().to_string())
+            .filter(|e| !e.is_empty());
 
         tx.execute(
-            "INSERT INTO Clientes (Nombre, Telefono) VALUES (?1, ?2)",
-            params![nombre, tel],
+            "INSERT INTO Clientes (Nombre, Telefono, Email) VALUES (?1, ?2, ?3)",
+            params![nombre, tel, email],
         )
         .map_err(|e| e.to_string())?;
         insertados += 1;
@@ -1448,6 +1843,7 @@ fn fila_a_producto(r: &rusqlite::Row) -> rusqlite::Result<Producto> {
         id_unidad_medida: r.get(11)?,
         tipo: r.get(12)?,
         maneja_caducidad: r.get::<_, i64>(13)? != 0,
+        unidad: r.get(14)?,
     })
 }
 
@@ -1504,6 +1900,118 @@ fn agregar_lote(
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Agrega una capa de costo PEPS (de una compra o alta) para un producto.
+fn agregar_capa(
+    tx: &rusqlite::Transaction,
+    id_producto: i64,
+    cantidad: f64,
+    costo_unitario: f64,
+) -> Result<(), String> {
+    if cantidad <= 0.0 {
+        return Ok(());
+    }
+    tx.execute(
+        "INSERT INTO CapasCosto (ID_Producto, Cantidad, CostoUnitario) VALUES (?1, ?2, ?3)",
+        params![id_producto, cantidad, costo_unitario],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Consume `cantidad` de las capas PEPS (la más antigua primero) y devuelve el
+/// COSTO total consumido (COGS). Si faltan capas (descuadre), valúa el resto al
+/// PrecioCosto actual del producto para no subvaluar el costo.
+fn consumir_capas_fifo(
+    tx: &rusqlite::Transaction,
+    id_producto: i64,
+    cantidad: f64,
+) -> Result<f64, String> {
+    if cantidad <= 0.0 {
+        return Ok(0.0);
+    }
+    let capas: Vec<(i64, f64, f64)> = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT ID_Capa, Cantidad, CostoUnitario FROM CapasCosto
+                 WHERE ID_Producto = ?1 AND Cantidad > 0
+                 ORDER BY ID_Capa ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([id_producto], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())?
+    };
+    let mut restante = cantidad;
+    let mut costo_total = 0.0_f64;
+    for (id_capa, disponible, costo) in capas {
+        if restante <= 0.0 {
+            break;
+        }
+        let usar = restante.min(disponible);
+        costo_total += usar * costo;
+        tx.execute(
+            "UPDATE CapasCosto SET Cantidad = Cantidad - ?1 WHERE ID_Capa = ?2",
+            params![usar, id_capa],
+        )
+        .map_err(|e| e.to_string())?;
+        restante -= usar;
+    }
+    if restante > 0.0 {
+        let ultimo: f64 = tx
+            .query_row(
+                "SELECT PrecioCosto FROM Productos WHERE ID_Producto = ?1",
+                [id_producto],
+                |r| r.get(0),
+            )
+            .unwrap_or(0.0);
+        costo_total += restante * ultimo;
+    }
+    Ok(costo_total)
+}
+
+/// Refleja en las capas PEPS un ajuste de inventario: un sobrante crea una capa
+/// al costo actual; un faltante consume capas (la pérdida sale del valor).
+/// Devuelve el COSTO total involucrado (agregado o consumido), para registrarlo
+/// como costo unitario del movimiento en el kardex.
+fn reflejar_capas_ajuste(
+    tx: &rusqlite::Transaction,
+    id_producto: i64,
+    delta: f64,
+    costo_provisto: Option<f64>,
+) -> Result<f64, String> {
+    if delta > 0.0 {
+        // Stock "encontrado": costo que indique el usuario; si no, el del ÚLTIMO
+        // lote/capa registrado; si no hay capas, el PrecioCosto; si tampoco, 0.
+        let costo = if let Some(c) = costo_provisto.filter(|c| *c > 0.0) {
+            c
+        } else {
+            tx.query_row(
+                "SELECT CostoUnitario FROM CapasCosto
+                 WHERE ID_Producto = ?1 AND CostoUnitario > 0
+                 ORDER BY ID_Capa DESC LIMIT 1",
+                [id_producto],
+                |r| r.get::<_, f64>(0),
+            )
+            .or_else(|_| {
+                tx.query_row(
+                    "SELECT PrecioCosto FROM Productos WHERE ID_Producto = ?1",
+                    [id_producto],
+                    |r| r.get::<_, f64>(0),
+                )
+            })
+            .unwrap_or(0.0)
+        };
+        agregar_capa(tx, id_producto, delta, costo)?;
+        Ok(delta * costo)
+    } else if delta < 0.0 {
+        // Merma/faltante: descuenta del lote más viejo (FEFO/FIFO), como una venta.
+        consumir_capas_fifo(tx, id_producto, -delta)
+    } else {
+        Ok(0.0)
+    }
 }
 
 /// Edita los datos de un producto (no toca la existencia; eso va por ajuste).
@@ -1619,11 +2127,18 @@ pub fn ajustar_inventario(
     cantidad: f64,
     motivo: Option<String>,
     id_usuario: Option<i64>,
+    costo: Option<f64>,
 ) -> Result<f64, String> {
     exigir_admin(&sesion)?;
     if cantidad < 0.0 {
         return Err("La cantidad no puede ser negativa".into());
     }
+    // El motivo es OBLIGATORIO: todo aumento/baja manual debe quedar justificado
+    // para tener trazabilidad exacta en el kardex.
+    let motivo = motivo
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty())
+        .ok_or_else(|| "Indica el motivo del ajuste".to_string())?;
 
     let mut conn = pool.get().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -1662,10 +2177,18 @@ pub fn ajustar_inventario(
                 return Err("No hay suficiente existencia en los lotes".into());
             }
         }
+        let costo_aj = reflejar_capas_ajuste(&tx, id_producto, delta, costo)?;
         tx.execute(
-            "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![id_producto, tipo, delta, motivo, id_usuario],
+            "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario, CostoUnitario)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                id_producto,
+                tipo,
+                delta,
+                motivo,
+                id_usuario,
+                if delta != 0.0 { costo_aj / delta.abs() } else { 0.0 }
+            ],
         )
         .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
@@ -1713,11 +2236,19 @@ pub fn ajustar_inventario(
         params![nueva, id_producto],
     )
     .map_err(|e| e.to_string())?;
+    let costo_aj = reflejar_capas_ajuste(&tx, id_producto, delta, costo)?;
 
     tx.execute(
-        "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![id_producto, tipo, delta, motivo, id_usuario],
+        "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario, CostoUnitario)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            id_producto,
+            tipo,
+            delta,
+            motivo,
+            id_usuario,
+            if delta != 0.0 { costo_aj / delta.abs() } else { 0.0 }
+        ],
     )
     .map_err(|e| e.to_string())?;
 
@@ -1731,6 +2262,207 @@ pub fn ajustar_inventario(
         &format!("{tipo}: {cantidad}"),
     );
     Ok(nueva)
+}
+
+/// Reporte de entradas/salidas de mercancía (kardex) agrupado por producto,
+/// entre dos fechas ('YYYY-MM-DD', inclusivo, hora local). Cuenta lo comprado,
+/// vendido, mermado y los totales de entradas/salidas en el periodo.
+#[tauri::command]
+pub fn reporte_movimientos(
+    pool: State<Db>,
+    desde: String,
+    hasta: String,
+) -> Result<Vec<MovimientoResumen>, String> {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT p.Producto,
+                    COALESCE(SUM(CASE WHEN m.Motivo = 'Compra' THEN m.Cantidad ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN m.Tipo = 'Venta'  THEN -m.Cantidad ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN m.Tipo = 'Merma'  THEN -m.Cantidad ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN m.Cantidad > 0 THEN m.Cantidad  ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN m.Cantidad < 0 THEN -m.Cantidad ELSE 0 END), 0)
+             FROM MovimientosInventario m
+             JOIN Productos p ON p.ID_Producto = m.ID_Producto
+             WHERE date(m.Fecha, 'localtime') BETWEEN ?1 AND ?2
+             GROUP BY m.ID_Producto, p.Producto
+             ORDER BY p.Producto",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![desde, hasta], |r| {
+            Ok(MovimientoResumen {
+                producto: r.get(0)?,
+                comprado: r.get(1)?,
+                vendido: r.get(2)?,
+                merma: r.get(3)?,
+                entradas: r.get(4)?,
+                salidas: r.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+}
+
+/// Historial (kardex) completo de un producto: cada movimiento con su fecha,
+/// tipo, cantidad (con signo), motivo y usuario. Más reciente primero.
+#[tauri::command]
+pub fn historial_producto(
+    pool: State<Db>,
+    id_producto: i64,
+) -> Result<Vec<MovimientoDetalle>, String> {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT m.Fecha, m.Tipo, m.Cantidad, m.Motivo, u.Nombre
+             FROM MovimientosInventario m
+             LEFT JOIN Usuarios u ON u.ID_Usuario = m.ID_Usuario
+             WHERE m.ID_Producto = ?1
+             ORDER BY m.ID_Movimiento DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([id_producto], |r| {
+            Ok(MovimientoDetalle {
+                fecha: r.get(0)?,
+                tipo: r.get(1)?,
+                cantidad: r.get(2)?,
+                motivo: r.get(3)?,
+                usuario: r.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+}
+
+/// Reporte de utilidad (PEPS) entre dos fechas: por producto, lo vendido, las
+/// ventas, el costo de ventas (COGS PEPS), la utilidad y el margen %.
+#[tauri::command]
+pub fn reporte_utilidad(
+    pool: State<Db>,
+    desde: String,
+    hasta: String,
+) -> Result<Vec<UtilidadProducto>, String> {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT p.Producto,
+                    SUM(dv.Cantidad),
+                    SUM(dv.Cantidad * dv.PrecioVentaHistorico),
+                    SUM(COALESCE(dv.CostoHistorico, 0))
+             FROM Detalle_Ventas dv
+             JOIN Ventas v ON v.ID_Venta = dv.ID_Venta
+             JOIN Productos p ON p.ID_Producto = dv.ID_Producto
+             WHERE v.Estatus = 'Completada'
+               AND date(v.FechaVenta, 'localtime') BETWEEN ?1 AND ?2
+             GROUP BY dv.ID_Producto, p.Producto
+             ORDER BY p.Producto",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![desde, hasta], |r| {
+            let producto: String = r.get(0)?;
+            let vendido: f64 = r.get(1)?;
+            let ventas: f64 = r.get(2)?;
+            let costo: f64 = r.get(3)?;
+            let utilidad = ventas - costo;
+            let margen = if ventas > 0.0 { utilidad / ventas * 100.0 } else { 0.0 };
+            Ok(UtilidadProducto {
+                producto,
+                vendido,
+                ventas,
+                costo,
+                utilidad,
+                margen,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+}
+
+/// Inventario valuado a PEPS: por producto, existencia, costo unitario (de las
+/// capas restantes) y valor total. Solo productos activos con existencia/valor.
+#[tauri::command]
+pub fn reporte_inventario_valorizado(
+    pool: State<Db>,
+) -> Result<Vec<InventarioValorizado>, String> {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT p.Producto,
+                    CASE WHEN p.ManejaCaducidad = 1
+                         THEN COALESCE((SELECT SUM(Cantidad) FROM Lotes WHERE ID_Producto = p.ID_Producto), 0)
+                         ELSE COALESCE((SELECT Cantidad FROM Inventario WHERE ID_Producto = p.ID_Producto), 0) END,
+                    COALESCE((SELECT SUM(Cantidad * CostoUnitario) FROM CapasCosto WHERE ID_Producto = p.ID_Producto), 0)
+             FROM Productos p
+             WHERE p.Tipo <> 'Servicio' AND p.Activo = 1
+             ORDER BY p.Producto",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            let producto: String = r.get(0)?;
+            let existencia: f64 = r.get(1)?;
+            let valor: f64 = r.get(2)?;
+            let costo_unitario = if existencia > 0.0 { valor / existencia } else { 0.0 };
+            Ok(InventarioValorizado {
+                producto,
+                existencia,
+                costo_unitario,
+                valor,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+        .map(|v: Vec<InventarioValorizado>| {
+            v.into_iter()
+                .filter(|x| x.existencia > 0.0 || x.valor.abs() > 0.0001)
+                .collect()
+        })
+}
+
+/// Kardex valorizado (tarjeta de almacén) de un producto: cada movimiento con
+/// su costo unitario y el saldo acumulado (cantidad y valor PEPS). Más antiguo
+/// primero, para que el saldo se lea de arriba hacia abajo.
+#[tauri::command]
+pub fn kardex_valorizado(
+    pool: State<Db>,
+    id_producto: i64,
+) -> Result<Vec<KardexLinea>, String> {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT m.Fecha, COALESCE(NULLIF(m.Motivo, ''), m.Tipo), m.Cantidad,
+                    COALESCE(m.CostoUnitario, 0)
+             FROM MovimientosInventario m
+             WHERE m.ID_Producto = ?1
+             ORDER BY m.ID_Movimiento ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let filas: Vec<(String, String, f64, f64)> = stmt
+        .query_map([id_producto], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    let mut saldo_c = 0.0_f64;
+    let mut saldo_v = 0.0_f64;
+    let mut out = Vec::with_capacity(filas.len());
+    for (fecha, concepto, cantidad, costo) in filas {
+        saldo_c += cantidad;
+        saldo_v += cantidad * costo;
+        out.push(KardexLinea {
+            fecha,
+            concepto,
+            cantidad,
+            costo_unitario: costo,
+            saldo_cantidad: saldo_c,
+            saldo_valor: saldo_v,
+        });
+    }
+    Ok(out)
 }
 
 // =====================================================================
@@ -1818,14 +2550,17 @@ pub fn dar_baja_lote(
     }
     tx.execute("UPDATE Lotes SET Cantidad = 0 WHERE ID_Lote = ?1", [id_lote])
         .map_err(|e| e.to_string())?;
+    // Consume las capas PEPS de lo dado de baja (para que el valor cuadre).
+    let cogs = consumir_capas_fifo(&tx, id_producto, cantidad)?;
     tx.execute(
-        "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario)
-         VALUES (?1, 'Merma', ?2, ?3, ?4)",
+        "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario, CostoUnitario)
+         VALUES (?1, 'Merma', ?2, ?3, ?4, ?5)",
         params![
             id_producto,
             -cantidad,
             motivo.unwrap_or_else(|| "Merma de lote vencido".to_string()),
-            id_usuario
+            id_usuario,
+            if cantidad > 0.0 { cogs / cantidad } else { 0.0 }
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -2423,7 +3158,7 @@ pub fn listar_proveedores(
     let conn = pool.get().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare(
-            "SELECT ID_Proveedor, Proveedor, Contacto, Telefono, Activo
+            "SELECT ID_Proveedor, Proveedor, Contacto, Telefono, Email, Activo
              FROM Proveedores WHERE (?1 = 1 OR Activo = 1) ORDER BY Proveedor",
         )
         .map_err(|e| e.to_string())?;
@@ -2434,7 +3169,8 @@ pub fn listar_proveedores(
                 proveedor: r.get(1)?,
                 contacto: r.get(2)?,
                 telefono: r.get(3)?,
-                activo: r.get::<_, i64>(4)? != 0,
+                email: r.get(4)?,
+                activo: r.get::<_, i64>(5)? != 0,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -2448,14 +3184,26 @@ pub fn crear_proveedor(
     datos: NuevoProveedor,
 ) -> Result<i64, String> {
     exigir_admin(&sesion)?;
+    let proveedor = datos.proveedor.trim();
+    if proveedor.is_empty() {
+        return Err("El nombre del proveedor es obligatorio".into());
+    }
+    let telefono = datos
+        .telefono
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| "El teléfono es obligatorio".to_string())?;
+    let contacto = datos.contacto.as_deref().map(str::trim).filter(|c| !c.is_empty());
+    let email = datos.email.as_deref().map(str::trim).filter(|e| !e.is_empty());
     let conn = pool.get().map_err(|e| e.to_string())?;
     conn.execute(
-        "INSERT INTO Proveedores (Proveedor, Contacto, Telefono) VALUES (?1, ?2, ?3)",
-        params![datos.proveedor, datos.contacto, datos.telefono],
+        "INSERT INTO Proveedores (Proveedor, Contacto, Telefono, Email) VALUES (?1, ?2, ?3, ?4)",
+        params![proveedor, contacto, telefono, email],
     )
     .map_err(|e| e.to_string())?;
     let id = conn.last_insert_rowid();
-    bitacora(&pool, &sesion, "Alta", "Proveedor", Some(id), &datos.proveedor);
+    bitacora(&pool, &sesion, "Alta", "Proveedor", Some(id), proveedor);
     Ok(id)
 }
 
@@ -2467,14 +3215,26 @@ pub fn actualizar_proveedor(
     datos: EditarProveedor,
 ) -> Result<(), String> {
     exigir_admin(&sesion)?;
+    let proveedor = datos.proveedor.trim();
+    if proveedor.is_empty() {
+        return Err("El nombre del proveedor es obligatorio".into());
+    }
+    let telefono = datos
+        .telefono
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| "El teléfono es obligatorio".to_string())?;
+    let contacto = datos.contacto.as_deref().map(str::trim).filter(|c| !c.is_empty());
+    let email = datos.email.as_deref().map(str::trim).filter(|e| !e.is_empty());
     let conn = pool.get().map_err(|e| e.to_string())?;
     conn.execute(
-        "UPDATE Proveedores SET Proveedor = ?1, Contacto = ?2, Telefono = ?3, Activo = ?4
-         WHERE ID_Proveedor = ?5",
-        params![datos.proveedor, datos.contacto, datos.telefono, datos.activo as i64, id],
+        "UPDATE Proveedores SET Proveedor = ?1, Contacto = ?2, Telefono = ?3, Email = ?4, Activo = ?5
+         WHERE ID_Proveedor = ?6",
+        params![proveedor, contacto, telefono, email, datos.activo as i64, id],
     )
     .map_err(|e| e.to_string())?;
-    bitacora(&pool, &sesion, "Edición", "Proveedor", Some(id), &datos.proveedor);
+    bitacora(&pool, &sesion, "Edición", "Proveedor", Some(id), proveedor);
     Ok(())
 }
 
@@ -2499,6 +3259,82 @@ pub fn registrar_compra(
         .iter()
         .map(|i| i.cantidad * i.costo_unitario)
         .sum();
+
+    // Candado anti-duplicado (evita registrar la misma factura 2 veces):
+    //   - con folio: rechaza si ya existe ese folio del mismo proveedor.
+    //   - sin folio: heurística (mismo proveedor, total e ítems en la última hora).
+    if let Some(folio) = compra.folio.as_deref().map(str::trim).filter(|f| !f.is_empty()) {
+        let ya: bool = tx
+            .query_row(
+                "SELECT 1 FROM Compras
+                 WHERE Folio = ?1 AND COALESCE(ID_Proveedor, -1) = COALESCE(?2, -1) LIMIT 1",
+                params![folio, compra.id_proveedor],
+                |_| Ok(true),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .unwrap_or(false);
+        if ya {
+            return Err(format!(
+                "Ya registraste una compra con el folio '{folio}'. ¿La estás capturando dos veces?"
+            ));
+        }
+    } else {
+        // Sin folio/proveedor (compras informales: Costco, Sam's, vendedor de la
+        // calle). Se detecta una compra idéntica reciente por su CONTENIDO: mismo
+        // proveedor (o ninguno), mismo total, misma cantidad de ítems y, además,
+        // los MISMOS productos y cantidades. Ventana amplia (3 días) porque sin
+        // folio es la única forma de cuidar al usuario.
+        let n_items = compra.items.len() as i64;
+        // "Huella" del contenido: lista ordenada de producto:cantidad.
+        let mut firma: Vec<String> = compra
+            .items
+            .iter()
+            .map(|i| format!("{}:{}", i.id_producto, i.cantidad))
+            .collect();
+        firma.sort();
+        let firma = firma.join(",");
+
+        let candidatas: Vec<i64> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT c.ID_Compra FROM Compras c
+                     WHERE COALESCE(c.ID_Proveedor, -1) = COALESCE(?1, -1)
+                       AND ABS(c.Total - ?2) < 0.01
+                       AND c.FechaCompra >= datetime('now', '-3 days')
+                       AND (SELECT COUNT(*) FROM Detalle_Compras d WHERE d.ID_Compra = c.ID_Compra) = ?3",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![compra.id_proveedor, total, n_items], |r| r.get(0))
+                .map_err(|e| e.to_string())?;
+            rows.collect::<Result<_, _>>().map_err(|e| e.to_string())?
+        };
+        for id_compra in candidatas {
+            let mut otra: Vec<String> = {
+                let mut stmt = tx
+                    .prepare(
+                        "SELECT ID_Producto, Cantidad FROM Detalle_Compras WHERE ID_Compra = ?1",
+                    )
+                    .map_err(|e| e.to_string())?;
+                let rows = stmt
+                    .query_map([id_compra], |r| {
+                        Ok(format!("{}:{}", r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+                    })
+                    .map_err(|e| e.to_string())?;
+                rows.collect::<Result<_, _>>().map_err(|e| e.to_string())?
+            };
+            otra.sort();
+            if otra.join(",") == firma {
+                return Err(
+                    "Esta compra es idéntica a una que registraste en los últimos días \
+                     (mismos productos, cantidades y total). Si de verdad es OTRA compra, \
+                     cambia algo (una cantidad) o ponle un folio para diferenciarla."
+                        .into(),
+                );
+            }
+        }
+    }
 
     tx.execute(
         "INSERT INTO Compras (ID_Proveedor, ID_Usuario, Folio, Total) VALUES (?1, ?2, ?3, ?4)",
@@ -2551,17 +3387,38 @@ pub fn registrar_compra(
             .map_err(|e| e.to_string())?;
         }
 
+        // Capa de costo PEPS de esta compra (con el costo del proveedor).
+        agregar_capa(&tx, it.id_producto, it.cantidad, it.costo_unitario)?;
+
         tx.execute(
-            "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario)
-             VALUES (?1, 'Entrada', ?2, 'Compra', ?3)",
-            params![it.id_producto, it.cantidad, compra.id_usuario],
+            "INSERT INTO MovimientosInventario (ID_Producto, Tipo, Cantidad, Motivo, ID_Usuario, CostoUnitario)
+             VALUES (?1, 'Entrada', ?2, 'Compra', ?3, ?4)",
+            params![it.id_producto, it.cantidad, compra.id_usuario, it.costo_unitario],
         )
         .map_err(|e| e.to_string())?;
 
-        if compra.actualizar_costo {
+        // Con PEPS el costo real de venta sale de las capas; PrecioCosto es solo el
+        // "último costo conocido" de referencia (para margen/reportes), así que se
+        // refresca SIEMPRE con el costo de esta compra. No requiere preguntar.
+        tx.execute(
+            "UPDATE Productos SET PrecioCosto = ?1 WHERE ID_Producto = ?2",
+            params![it.costo_unitario, it.id_producto],
+        )
+        .map_err(|e| e.to_string())?;
+        // Valúa el stock que esté SIN costo (capas en $0, p. ej. de una importación
+        // sin PRECIOCOSTO) a este costo. No toca capas ya costeadas.
+        tx.execute(
+            "UPDATE CapasCosto SET CostoUnitario = ?1
+             WHERE ID_Producto = ?2 AND CostoUnitario <= 0",
+            params![it.costo_unitario, it.id_producto],
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Opcional: si la compra trae un precio de venta, también se actualiza.
+        if let Some(pv) = it.precio_venta.filter(|p| *p > 0.0) {
             tx.execute(
-                "UPDATE Productos SET PrecioCosto = ?1 WHERE ID_Producto = ?2",
-                params![it.costo_unitario, it.id_producto],
+                "UPDATE Productos SET PrecioUnitario = ?1 WHERE ID_Producto = ?2",
+                params![pv, it.id_producto],
             )
             .map_err(|e| e.to_string())?;
         }
@@ -2592,7 +3449,7 @@ pub fn listar_clientes(
     let conn = pool.get().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare(
-            "SELECT ID_Cliente, Nombre, Telefono, SaldoFiado, Activo
+            "SELECT ID_Cliente, Nombre, Telefono, Email, SaldoFiado, Activo
              FROM Clientes WHERE (?1 = 1 OR Activo = 1) ORDER BY Nombre",
         )
         .map_err(|e| e.to_string())?;
@@ -2602,8 +3459,9 @@ pub fn listar_clientes(
                 id_cliente: r.get(0)?,
                 nombre: r.get(1)?,
                 telefono: r.get(2)?,
-                saldo_fiado: r.get(3)?,
-                activo: r.get::<_, i64>(4)? != 0,
+                email: r.get(3)?,
+                saldo_fiado: r.get(4)?,
+                activo: r.get::<_, i64>(5)? != 0,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -2617,14 +3475,25 @@ pub fn crear_cliente(
     datos: NuevoCliente,
 ) -> Result<i64, String> {
     usuario_actual(&sesion)?; // cajero o admin (POST permitido al cajero)
+    let nombre = datos.nombre.trim();
+    if nombre.is_empty() {
+        return Err("El nombre del cliente es obligatorio".into());
+    }
+    let telefono = datos
+        .telefono
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| "El teléfono es obligatorio".to_string())?;
+    let email = datos.email.as_deref().map(str::trim).filter(|e| !e.is_empty());
     let conn = pool.get().map_err(|e| e.to_string())?;
     conn.execute(
-        "INSERT INTO Clientes (Nombre, Telefono) VALUES (?1, ?2)",
-        params![datos.nombre, datos.telefono],
+        "INSERT INTO Clientes (Nombre, Telefono, Email) VALUES (?1, ?2, ?3)",
+        params![nombre, telefono, email],
     )
     .map_err(|e| e.to_string())?;
     let id = conn.last_insert_rowid();
-    bitacora(&pool, &sesion, "Alta", "Cliente", Some(id), &datos.nombre);
+    bitacora(&pool, &sesion, "Alta", "Cliente", Some(id), nombre);
     Ok(id)
 }
 
@@ -2636,24 +3505,35 @@ pub fn actualizar_cliente(
     datos: EditarCliente,
 ) -> Result<(), String> {
     let u = usuario_actual(&sesion)?;
+    let nombre = datos.nombre.trim();
+    if nombre.is_empty() {
+        return Err("El nombre del cliente es obligatorio".into());
+    }
+    let telefono = datos
+        .telefono
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| "El teléfono es obligatorio".to_string())?;
+    let email = datos.email.as_deref().map(str::trim).filter(|e| !e.is_empty());
     let conn = pool.get().map_err(|e| e.to_string())?;
 
     if u.rol == "Administrador" {
         // Admin: puede cambiar todo, incluido activar/desactivar.
         conn.execute(
-            "UPDATE Clientes SET Nombre = ?1, Telefono = ?2, Activo = ?3 WHERE ID_Cliente = ?4",
-            params![datos.nombre, datos.telefono, datos.activo as i64, id],
+            "UPDATE Clientes SET Nombre = ?1, Telefono = ?2, Email = ?3, Activo = ?4 WHERE ID_Cliente = ?5",
+            params![nombre, telefono, email, datos.activo as i64, id],
         )
         .map_err(|e| e.to_string())?;
     } else {
-        // Cajero: solo información personal (nombre/teléfono), NO el estado activo.
+        // Cajero: solo información personal (nombre/teléfono/email), NO el estado activo.
         conn.execute(
-            "UPDATE Clientes SET Nombre = ?1, Telefono = ?2 WHERE ID_Cliente = ?3",
-            params![datos.nombre, datos.telefono, id],
+            "UPDATE Clientes SET Nombre = ?1, Telefono = ?2, Email = ?3 WHERE ID_Cliente = ?4",
+            params![nombre, telefono, email, id],
         )
         .map_err(|e| e.to_string())?;
     }
-    bitacora(&pool, &sesion, "Edición", "Cliente", Some(id), &datos.nombre);
+    bitacora(&pool, &sesion, "Edición", "Cliente", Some(id), nombre);
     Ok(())
 }
 

@@ -27,6 +27,7 @@
 	let editandoId = $state<number | null>(null);
 	let nombre = $state('');
 	let telefono = $state('');
+	let email = $state('');
 	let activo = $state(true);
 	let errorCli = $state('');
 	let guardando = $state(false);
@@ -73,6 +74,7 @@
 		editandoId = null;
 		nombre = '';
 		telefono = '';
+		email = '';
 		activo = true;
 		errorCli = '';
 		modalCli = true;
@@ -82,6 +84,7 @@
 		editandoId = c.idCliente;
 		nombre = c.nombre;
 		telefono = c.telefono ?? '';
+		email = c.email ?? '';
 		activo = c.activo;
 		errorCli = '';
 		modalCli = true;
@@ -92,17 +95,26 @@
 			errorCli = 'El nombre es obligatorio.';
 			return;
 		}
+		if (!telefono.trim()) {
+			errorCli = 'El teléfono es obligatorio.';
+			return;
+		}
 		guardando = true;
 		errorCli = '';
 		try {
 			if (editandoId != null) {
 				await api.actualizarCliente(editandoId, {
 					nombre: nombre.trim(),
-					telefono: telefono.trim() || null,
+					telefono: telefono.trim(),
+					email: email.trim() || null,
 					activo
 				});
 			} else {
-				await api.crearCliente({ nombre: nombre.trim(), telefono: telefono.trim() || null });
+				await api.crearCliente({
+					nombre: nombre.trim(),
+					telefono: telefono.trim(),
+					email: email.trim() || null
+				});
 			}
 			await cargar();
 			modalCli = false;
@@ -149,9 +161,14 @@
 			<button onclick={() => goto(resolve('/'))} class="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100" aria-label="Volver">←</button>
 			<h1 class="text-lg font-semibold text-slate-800">Clientes</h1>
 		</div>
-		<button onclick={abrirNuevo} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
-			+ Nuevo cliente
-		</button>
+		<div class="flex gap-2">
+			<button onclick={() => goto(resolve('/datos'))} class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
+				📤 Importar / Exportar
+			</button>
+			<button onclick={abrirNuevo} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+				+ Nuevo cliente
+			</button>
+		</div>
 	</header>
 
 	<main class="mx-auto max-w-5xl p-6">
@@ -199,7 +216,10 @@
 									{c.nombre}
 									{#if !c.activo}<span class="ml-1 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">inactivo</span>{/if}
 								</td>
-								<td class="px-4 py-2.5 text-slate-600">{c.telefono ?? '—'}</td>
+								<td class="px-4 py-2.5 text-slate-600">
+									{c.telefono ?? '—'}
+									{#if c.email}<div class="text-xs text-slate-400">{c.email}</div>{/if}
+								</td>
 								<td class="px-4 py-2.5 text-right font-medium {c.saldoFiado > 0 ? 'text-red-600' : 'text-slate-400'}">{pesos(c.saldoFiado)}</td>
 								<td class="px-4 py-2.5 text-right whitespace-nowrap">
 									{#if c.saldoFiado > 0}
@@ -227,12 +247,16 @@
 			</div>
 			<div class="space-y-3">
 				<div>
-					<label for="cn" class="mb-1 block text-sm font-medium text-slate-700">Nombre</label>
-					<input id="cn" bind:value={nombre} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+					<label for="cn" class="mb-1 block text-sm font-medium text-slate-700">Nombre *</label>
+					<input id="cn" bind:value={nombre} required class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
 				</div>
 				<div>
-					<label for="ct" class="mb-1 block text-sm font-medium text-slate-700">Teléfono (opcional)</label>
-					<input id="ct" bind:value={telefono} inputmode="tel" class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+					<label for="ct" class="mb-1 block text-sm font-medium text-slate-700">Teléfono *</label>
+					<input id="ct" bind:value={telefono} inputmode="tel" required class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+				</div>
+				<div>
+					<label for="ce" class="mb-1 block text-sm font-medium text-slate-700">Correo electrónico (opcional)</label>
+					<input id="ce" bind:value={email} type="email" inputmode="email" placeholder="correo@ejemplo.com" class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
 				</div>
 				{#if editandoId != null && esAdmin}
 					<label class="flex items-center gap-2 text-sm text-slate-700">

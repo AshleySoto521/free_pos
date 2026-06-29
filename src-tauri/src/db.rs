@@ -90,6 +90,69 @@ pub fn init(app: &AppHandle) -> Result<Db, Box<dyn Error>> {
          CREATE INDEX IF NOT EXISTS idx_lotes_caducidad ON Lotes(Caducidad);",
     )?;
 
+    // Migración: costeo PEPS/FIFO. Cada compra/alta crea una "capa" con su costo;
+    // al vender se consume la más antigua y de ahí sale el costo de venta (COGS).
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS CapasCosto (
+            ID_Capa       INTEGER PRIMARY KEY AUTOINCREMENT,
+            ID_Producto   INTEGER NOT NULL,
+            Cantidad      REAL NOT NULL,          -- cantidad restante en la capa
+            CostoUnitario REAL NOT NULL,
+            Fecha         DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (ID_Producto) REFERENCES Productos(ID_Producto)
+         );
+         CREATE INDEX IF NOT EXISTS idx_capas_producto ON CapasCosto(ID_Producto);",
+    )?;
+    // Costo de venta histórico por línea (COGS), para reportes de utilidad.
+    agregar_columna_si_falta(&conn, "Detalle_Ventas", "CostoHistorico", "REAL DEFAULT 0")?;
+    // Costo unitario de cada movimiento, para el kardex valorizado.
+    agregar_columna_si_falta(&conn, "MovimientosInventario", "CostoUnitario", "REAL DEFAULT 0")?;
+    // Correo electrónico (opcional) de clientes y proveedores.
+    agregar_columna_si_falta(&conn, "Clientes", "Email", "TEXT")?;
+    agregar_columna_si_falta(&conn, "Proveedores", "Email", "TEXT")?;
+    // Siembra capas iniciales para productos con existencia y sin capas (una sola
+    // vez por producto). No-fatal: si fallara, no debe impedir abrir la app.
+    let _ = conn.execute_batch(
+        "INSERT INTO CapasCosto (ID_Producto, Cantidad, CostoUnitario)
+         SELECT p.ID_Producto,
+                CASE WHEN p.ManejaCaducidad = 1
+                     THEN COALESCE((SELECT SUM(Cantidad) FROM Lotes WHERE ID_Producto = p.ID_Producto), 0)
+                     ELSE COALESCE((SELECT Cantidad FROM Inventario WHERE ID_Producto = p.ID_Producto), 0) END,
+                p.PrecioCosto
+         FROM Productos p
+         WHERE p.Tipo <> 'Servicio'
+           AND NOT EXISTS (SELECT 1 FROM CapasCosto c WHERE c.ID_Producto = p.ID_Producto)
+           AND (CASE WHEN p.ManejaCaducidad = 1
+                     THEN COALESCE((SELECT SUM(Cantidad) FROM Lotes WHERE ID_Producto = p.ID_Producto), 0)
+                     ELSE COALESCE((SELECT Cantidad FROM Inventario WHERE ID_Producto = p.ID_Producto), 0) END) > 0;",
+    );
+
+    // Backfill (una sola vez): los movimientos creados ANTES de existir la
+    // columna CostoUnitario quedaron en 0; se valúan al PrecioCosto del producto
+    // para que el kardex valorizado cuadre. Una bandera evita repetirlo (así no
+    // pisa movimientos legítimamente en $0 a futuro).
+    let ya_backfill: bool = conn
+        .query_row(
+            "SELECT 1 FROM Configuracion WHERE Clave = 'backfill_costo_mov'",
+            [],
+            |_| Ok(true),
+        )
+        .optional()?
+        .unwrap_or(false);
+    if !ya_backfill {
+        let _ = conn.execute(
+            "UPDATE MovimientosInventario
+             SET CostoUnitario = COALESCE(
+                 (SELECT PrecioCosto FROM Productos WHERE ID_Producto = MovimientosInventario.ID_Producto), 0)
+             WHERE COALESCE(CostoUnitario, 0) = 0",
+            [],
+        );
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO Configuracion (Clave, Valor) VALUES ('backfill_costo_mov', '1')",
+            [],
+        );
+    }
+
     // Migración: catálogo de monedas y sus denominaciones.
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS Monedas (

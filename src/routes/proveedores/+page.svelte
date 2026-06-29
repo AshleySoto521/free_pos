@@ -25,6 +25,7 @@
 	let nombre = $state('');
 	let contacto = $state('');
 	let telefono = $state('');
+	let email = $state('');
 	let activo = $state(true);
 	let guardando = $state(false);
 	let error = $state('');
@@ -51,6 +52,7 @@
 		nombre = '';
 		contacto = '';
 		telefono = '';
+		email = '';
 		activo = true;
 		error = '';
 		modal = true;
@@ -61,6 +63,7 @@
 		nombre = p.proveedor;
 		contacto = p.contacto ?? '';
 		telefono = p.telefono ?? '';
+		email = p.email ?? '';
 		activo = p.activo;
 		error = '';
 		modal = true;
@@ -71,6 +74,10 @@
 			error = 'El nombre es obligatorio.';
 			return;
 		}
+		if (!telefono.trim()) {
+			error = 'El teléfono es obligatorio.';
+			return;
+		}
 		guardando = true;
 		error = '';
 		try {
@@ -78,14 +85,16 @@
 				await api.actualizarProveedor(editandoId, {
 					proveedor: nombre.trim(),
 					contacto: contacto.trim() || null,
-					telefono: telefono.trim() || null,
+					telefono: telefono.trim(),
+					email: email.trim() || null,
 					activo
 				});
 			} else {
 				await api.crearProveedor({
 					proveedor: nombre.trim(),
 					contacto: contacto.trim() || null,
-					telefono: telefono.trim() || null
+					telefono: telefono.trim(),
+					email: email.trim() || null
 				});
 			}
 			await cargar();
@@ -104,9 +113,14 @@
 			<button onclick={() => goto(resolve('/'))} class="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100" aria-label="Volver">←</button>
 			<h1 class="text-lg font-semibold text-slate-800">Proveedores</h1>
 		</div>
-		<button onclick={abrirNuevo} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
-			+ Nuevo proveedor
-		</button>
+		<div class="flex gap-2">
+			<button onclick={() => goto(resolve('/datos'))} class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
+				📤 Importar / Exportar
+			</button>
+			<button onclick={abrirNuevo} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+				+ Nuevo proveedor
+			</button>
+		</div>
 	</header>
 
 	<main class="mx-auto max-w-5xl p-6">
@@ -150,7 +164,10 @@
 									{#if !p.activo}<span class="ml-1 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">inactivo</span>{/if}
 								</td>
 								<td class="px-4 py-2.5 text-slate-600">{p.contacto ?? '—'}</td>
-								<td class="px-4 py-2.5 text-slate-600">{p.telefono ?? '—'}</td>
+								<td class="px-4 py-2.5 text-slate-600">
+									{p.telefono ?? '—'}
+									{#if p.email}<div class="text-xs text-slate-400">{p.email}</div>{/if}
+								</td>
 								<td class="px-4 py-2.5 text-right">
 									<button onclick={() => abrirEditar(p)} class="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100">Editar</button>
 								</td>
@@ -172,16 +189,20 @@
 			</div>
 			<div class="space-y-3">
 				<div>
-					<label for="pn" class="mb-1 block text-sm font-medium text-slate-700">Nombre</label>
-					<input id="pn" bind:value={nombre} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+					<label for="pn" class="mb-1 block text-sm font-medium text-slate-700">Nombre *</label>
+					<input id="pn" bind:value={nombre} required class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
 				</div>
 				<div>
 					<label for="pco" class="mb-1 block text-sm font-medium text-slate-700">Contacto (opcional)</label>
 					<input id="pco" bind:value={contacto} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
 				</div>
 				<div>
-					<label for="pt" class="mb-1 block text-sm font-medium text-slate-700">Teléfono (opcional)</label>
-					<input id="pt" bind:value={telefono} inputmode="tel" class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+					<label for="pt" class="mb-1 block text-sm font-medium text-slate-700">Teléfono *</label>
+					<input id="pt" bind:value={telefono} inputmode="tel" required class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+				</div>
+				<div>
+					<label for="pe" class="mb-1 block text-sm font-medium text-slate-700">Correo electrónico (opcional)</label>
+					<input id="pe" bind:value={email} type="email" inputmode="email" placeholder="correo@ejemplo.com" class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
 				</div>
 				{#if editandoId != null}
 					<label class="flex items-center gap-2 text-sm text-slate-700">

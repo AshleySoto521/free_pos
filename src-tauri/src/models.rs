@@ -44,6 +44,11 @@ pub struct FilaProductoImport {
     pub precio_costo: Option<f64>,
     pub existencia: Option<f64>,
     pub categoria: Option<String>,
+    #[serde(default)]
+    pub unidad: Option<String>,
+    /// Se vende a granel por peso/volumen (kg, g, lt, ml) en lugar de por pieza.
+    #[serde(default)]
+    pub se_vende_peso: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -51,6 +56,8 @@ pub struct FilaProductoImport {
 pub struct FilaClienteImport {
     pub nombre: String,
     pub telefono: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -66,6 +73,8 @@ pub struct FilaProveedorImport {
     pub proveedor: String,
     pub contacto: Option<String>,
     pub telefono: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -139,6 +148,7 @@ pub struct Producto {
     pub categoria: Option<String>,
     pub existencia: f64,
     pub activo: bool,
+    pub unidad: Option<String>,
 }
 
 /// Datos para editar un producto (no incluye existencia; eso va por ajuste).
@@ -213,6 +223,64 @@ pub struct LoteVencimiento {
     pub cantidad: f64,
     /// Días para caducar (negativo = ya venció). NULL si el lote no tiene caducidad.
     pub dias_restantes: Option<i64>,
+}
+
+// ---------- Reporte de movimientos (entradas/salidas) ----------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MovimientoResumen {
+    pub producto: String,
+    pub comprado: f64,
+    pub vendido: f64,
+    pub merma: f64,
+    pub entradas: f64,
+    pub salidas: f64,
+}
+
+/// Una línea del historial (kardex) de un producto: alta, venta, merma, etc.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MovimientoDetalle {
+    pub fecha: String,
+    pub tipo: String,            // 'Entrada' | 'Venta' | 'Merma' | 'Ajuste'
+    pub cantidad: f64,           // positivo = entró, negativo = salió
+    pub motivo: Option<String>,  // "Compra", "Venta", "Caducidad", "Robo", etc.
+    pub usuario: Option<String>,
+}
+
+// ---------- Reportes de costeo PEPS (utilidad e inventario valorizado) ----------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UtilidadProducto {
+    pub producto: String,
+    pub vendido: f64, // unidades
+    pub ventas: f64,  // ingreso
+    pub costo: f64,   // costo de ventas (COGS, PEPS)
+    pub utilidad: f64,
+    pub margen: f64, // % sobre ventas
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InventarioValorizado {
+    pub producto: String,
+    pub existencia: f64,
+    pub costo_unitario: f64, // costo promedio de las capas restantes (PEPS)
+    pub valor: f64,          // existencia valuada a PEPS
+}
+
+/// Una línea del kardex valorizado (tarjeta de almacén) de un producto.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KardexLinea {
+    pub fecha: String,
+    pub concepto: String,     // motivo (o tipo): Compra, Venta, Caducidad, etc.
+    pub cantidad: f64,        // con signo: positivo entra, negativo sale
+    pub costo_unitario: f64,
+    pub saldo_cantidad: f64,  // existencia acumulada
+    pub saldo_valor: f64,     // valor acumulado (PEPS)
 }
 
 // ---------- Ventas ----------
@@ -385,6 +453,7 @@ pub struct Proveedor {
     pub proveedor: String,
     pub contacto: Option<String>,
     pub telefono: Option<String>,
+    pub email: Option<String>,
     pub activo: bool,
 }
 
@@ -394,6 +463,8 @@ pub struct NuevoProveedor {
     pub proveedor: String,
     pub contacto: Option<String>,
     pub telefono: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -402,6 +473,8 @@ pub struct EditarProveedor {
     pub proveedor: String,
     pub contacto: Option<String>,
     pub telefono: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
     pub activo: bool,
 }
 
@@ -411,6 +484,9 @@ pub struct ItemCompra {
     pub id_producto: i64,
     pub cantidad: f64,
     pub costo_unitario: f64,
+    /// Opcional: si viene, actualiza también el precio de venta del producto.
+    #[serde(default)]
+    pub precio_venta: Option<f64>,
     /// Solo para productos con caducidad: lote y fecha de caducidad recibidos.
     #[serde(default)]
     pub lote: Option<String>,
@@ -424,9 +500,6 @@ pub struct NuevaCompra {
     pub id_proveedor: Option<i64>,
     pub id_usuario: Option<i64>,
     pub folio: Option<String>,
-    /// Si true, actualiza el PrecioCosto del producto con el costo de esta compra.
-    #[serde(default)]
-    pub actualizar_costo: bool,
     pub items: Vec<ItemCompra>,
 }
 
@@ -445,6 +518,7 @@ pub struct Cliente {
     pub id_cliente: i64,
     pub nombre: String,
     pub telefono: Option<String>,
+    pub email: Option<String>,
     pub saldo_fiado: f64,
     pub activo: bool,
 }
@@ -454,6 +528,8 @@ pub struct Cliente {
 pub struct NuevoCliente {
     pub nombre: String,
     pub telefono: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -461,6 +537,8 @@ pub struct NuevoCliente {
 pub struct EditarCliente {
     pub nombre: String,
     pub telefono: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
     pub activo: bool,
 }
 

@@ -53,10 +53,13 @@ export interface FilaProductoImport {
 	precioCosto?: number | null;
 	existencia?: number | null;
 	categoria?: string | null;
+	unidad?: string | null;
+	seVendePeso?: boolean | null;
 }
 export interface FilaClienteImport {
 	nombre: string;
 	telefono?: string | null;
+	email?: string | null;
 }
 export interface FilaCategoriaImport {
 	categoria: string;
@@ -66,6 +69,7 @@ export interface FilaProveedorImport {
 	proveedor: string;
 	contacto?: string | null;
 	telefono?: string | null;
+	email?: string | null;
 }
 export interface ResultadoImport {
 	insertados: number;
@@ -142,6 +146,7 @@ export interface Producto {
 	categoria: string | null;
 	existencia: number;
 	activo: boolean;
+	unidad: string | null;
 }
 
 export interface EditarProducto {
@@ -240,6 +245,48 @@ export interface ReporteVentas {
 	metodos: ReporteMetodo[];
 }
 
+export interface MovimientoResumen {
+	producto: string;
+	comprado: number;
+	vendido: number;
+	merma: number;
+	entradas: number;
+	salidas: number;
+}
+
+export interface MovimientoDetalle {
+	fecha: string;
+	tipo: string;
+	cantidad: number;
+	motivo: string | null;
+	usuario: string | null;
+}
+
+export interface UtilidadProducto {
+	producto: string;
+	vendido: number;
+	ventas: number;
+	costo: number;
+	utilidad: number;
+	margen: number;
+}
+
+export interface InventarioValorizado {
+	producto: string;
+	existencia: number;
+	costoUnitario: number;
+	valor: number;
+}
+
+export interface KardexLinea {
+	fecha: string;
+	concepto: string;
+	cantidad: number;
+	costoUnitario: number;
+	saldoCantidad: number;
+	saldoValor: number;
+}
+
 export interface Corte {
 	idCorte: number;
 	idUsuario: number;
@@ -292,17 +339,20 @@ export interface Proveedor {
 	proveedor: string;
 	contacto: string | null;
 	telefono: string | null;
+	email: string | null;
 	activo: boolean;
 }
 export interface NuevoProveedor {
 	proveedor: string;
 	contacto?: string | null;
 	telefono?: string | null;
+	email?: string | null;
 }
 export interface EditarProveedor {
 	proveedor: string;
 	contacto?: string | null;
 	telefono?: string | null;
+	email?: string | null;
 	activo: boolean;
 }
 
@@ -310,6 +360,7 @@ export interface ItemCompra {
 	idProducto: number;
 	cantidad: number;
 	costoUnitario: number;
+	precioVenta?: number | null;
 	lote?: string | null;
 	caducidad?: string | null;
 }
@@ -317,7 +368,6 @@ export interface NuevaCompra {
 	idProveedor?: number | null;
 	idUsuario?: number | null;
 	folio?: string | null;
-	actualizarCosto?: boolean;
 	items: ItemCompra[];
 }
 export interface CompraResultado {
@@ -329,16 +379,19 @@ export interface Cliente {
 	idCliente: number;
 	nombre: string;
 	telefono: string | null;
+	email: string | null;
 	saldoFiado: number;
 	activo: boolean;
 }
 export interface NuevoCliente {
 	nombre: string;
 	telefono?: string | null;
+	email?: string | null;
 }
 export interface EditarCliente {
 	nombre: string;
 	telefono?: string | null;
+	email?: string | null;
 	activo: boolean;
 }
 
@@ -420,6 +473,10 @@ export const api = {
 		invoke<void>('actualizar_producto', { id, datos }),
 	importarProductos: (filas: FilaProductoImport[]) =>
 		invoke<ResultadoImport>('importar_productos', { filas }),
+	iniciarInventario: (filas: FilaProductoImport[]) =>
+		invoke<ResultadoImport>('iniciar_inventario', { filas }),
+	actualizarPrecios: (filas: FilaProductoImport[]) =>
+		invoke<ResultadoImport>('actualizar_precios', { filas }),
 	importarClientes: (filas: FilaClienteImport[]) =>
 		invoke<ResultadoImport>('importar_clientes', { filas }),
 	importarCategorias: (filas: FilaCategoriaImport[]) =>
@@ -431,8 +488,17 @@ export const api = {
 		tipo: 'Entrada' | 'Merma' | 'Ajuste',
 		cantidad: number,
 		motivo?: string | null,
-		idUsuario?: number | null
-	) => invoke<number>('ajustar_inventario', { idProducto, tipo, cantidad, motivo, idUsuario }),
+		idUsuario?: number | null,
+		costo?: number | null
+	) =>
+		invoke<number>('ajustar_inventario', {
+			idProducto,
+			tipo,
+			cantidad,
+			motivo,
+			idUsuario,
+			costo
+		}),
 
 	// ----- Lotes / caducidad -----
 	listarLotes: (idProducto: number) => invoke<Lote[]>('listar_lotes', { idProducto }),
@@ -453,6 +519,16 @@ export const api = {
 		invoke<DetalleVentaLinea[]>('detalle_venta', { idVenta }),
 	reporteVentas: (desde: string, hasta: string) =>
 		invoke<ReporteVentas>('reporte_ventas', { desde, hasta }),
+	reporteMovimientos: (desde: string, hasta: string) =>
+		invoke<MovimientoResumen[]>('reporte_movimientos', { desde, hasta }),
+	historialProducto: (idProducto: number) =>
+		invoke<MovimientoDetalle[]>('historial_producto', { idProducto }),
+	reporteUtilidad: (desde: string, hasta: string) =>
+		invoke<UtilidadProducto[]>('reporte_utilidad', { desde, hasta }),
+	reporteInventarioValorizado: () =>
+		invoke<InventarioValorizado[]>('reporte_inventario_valorizado'),
+	kardexValorizado: (idProducto: number) =>
+		invoke<KardexLinea[]>('kardex_valorizado', { idProducto }),
 
 	// ----- Caja (cortes) -----
 	abrirCorte: (idUsuario: number, montoInicial: number) =>
