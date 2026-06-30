@@ -75,6 +75,8 @@ export interface ResultadoImport {
 	insertados: number;
 	omitidos: number;
 	errores: string[];
+	/** Solo en importación de productos: categorías del archivo que no existían. */
+	categoriasFaltantes?: string[];
 }
 export interface EditarUsuario {
 	nombre: string;
@@ -423,12 +425,12 @@ export const api = {
 	// ----- Catálogo -----
 	listarCategorias: (incluirInactivos?: boolean) =>
 		invoke<Categoria[]>('listar_categorias', { incluirInactivos }),
-	crearCategoria: (categoria: string, descripcion?: string | null) =>
+	crearCategoria: (categoria: string, descripcion: string) =>
 		invoke<number>('crear_categoria', { categoria, descripcion }),
 	actualizarCategoria: (
 		id: number,
 		categoria: string,
-		descripcion: string | null,
+		descripcion: string,
 		activo: boolean
 	) => invoke<void>('actualizar_categoria', { id, categoria, descripcion, activo }),
 	listarUnidades: () => invoke<UnidadMedida[]>('listar_unidades'),

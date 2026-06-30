@@ -37,7 +37,7 @@
 				<li>Captura los <strong>datos del negocio</strong> (aparecen en el ticket).</li>
 				<li>Elige tu <strong>moneda</strong> y tu <strong>modo de venta</strong> (productos, servicios o ambos) en el asistente o en Configuración.</li>
 				<li>Elige un <strong>catálogo de categorías</strong> según tu giro (asistente inicial o Catálogos → Categorías → 📚 Catálogo por giro).</li>
-				<li>Carga tu inventario inicial en Catálogos → Importar/Exportar → <strong>🏁 Iniciar inventario</strong> (solo al inaugurar). Después el stock entra por <strong>Compras</strong>.</li>
+				<li>Carga tu inventario inicial en Catálogos → Importar/Exportar → <strong>🏁 Iniciar inventario</strong> (solo al inaugurar; <strong>reemplaza todo el inventario</strong> por el archivo). Después el stock entra por <strong>Compras</strong>.</li>
 			</ol>
 
 			<h2>Vender 🛒</h2>

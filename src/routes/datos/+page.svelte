@@ -351,13 +351,24 @@
 		catFilas = [];
 		catErrores = [];
 		const filas = await parsearArchivo(file);
-		if (!encabezadosDe(filas).includes('CATEGORIA')) {
-			catErrores = ['Falta la columna obligatoria: CATEGORIA'];
+		const heads = encabezadosDe(filas);
+		const faltan = ['CATEGORIA', 'DESCRIPCION'].filter((h) => !heads.includes(h));
+		if (faltan.length) {
+			catErrores = [`Faltan columnas obligatorias: ${faltan.join(', ')}`];
 			return;
 		}
-		catFilas = filas
-			.filter((r) => r.CATEGORIA)
-			.map((r) => ({ categoria: r.CATEGORIA, descripcion: r.DESCRIPCION || null }));
+		const out: FilaCategoriaImport[] = [];
+		const errs: string[] = [];
+		filas.forEach((r, i) => {
+			if (!tieneValor(r.CATEGORIA)) return;
+			if (!tieneValor(r.DESCRIPCION)) {
+				errs.push(`Fila ${i + 2} (${r.CATEGORIA}): falta DESCRIPCION`);
+				return;
+			}
+			out.push({ categoria: r.CATEGORIA, descripcion: r.DESCRIPCION });
+		});
+		catErrores = errs;
+		catFilas = errs.length ? [] : out;
 	}
 
 	async function importarCategorias() {
@@ -505,6 +516,11 @@
 						</ul>
 					{/if}
 				</div>
+				{#if prodResultado.categoriasFaltantes?.length}
+					<div class="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+						⚠️ Estas categorías no existían, así que esos productos quedaron <strong>sin categoría</strong>: {prodResultado.categoriasFaltantes.join(', ')}. Créalas en Categorías (o el catálogo por giro) y vuelve a importar para asignarlas.
+					</div>
+				{/if}
 			{/if}
 		</section>
 
@@ -523,10 +539,10 @@
 				<code class="rounded bg-amber-100 px-1 text-xs">SEVENDEPESO</code> (Sí/No: granel por kg, g, lt, ml).
 			</p>
 			<div class="mb-3 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">
-				⚠️ <strong>Resetea el stock</strong> de cada producto del archivo: borra sus lotes y capas de
-				costo actuales y los vuelve a crear con la EXISTENCIA y el PRECIOCOSTO del archivo. Los
-				productos que <em>no</em> estén en el archivo no se tocan. Después de inaugurar, el stock entra
-				por <strong>Compras</strong> — no vuelvas a usar este botón.
+				⚠️ <strong>Borra TODO el inventario actual</strong> (todos los productos, existencias, capas de
+				costo y lotes) y lo reemplaza <strong>exactamente</strong> por lo del archivo. Conserva usuarios,
+				ventas, configuración y categorías. <strong>Solo al inaugurar.</strong> Si ya hay ventas o compras,
+				no se permite (para no romper el historial). Después, el stock entra por <strong>Compras</strong>.
 			</div>
 			<button
 				type="button"
@@ -554,7 +570,7 @@
 					<p class="text-amber-900">{iniArchivo}: <strong>{iniFilas.length}</strong> productos listos para sembrar.</p>
 					<label class="flex items-start gap-2 text-amber-900">
 						<input type="checkbox" bind:checked={iniConfirmo} class="mt-0.5 rounded border-amber-400 text-amber-600 focus:ring-amber-500" />
-						<span>Entiendo que esto <strong>reemplaza</strong> el stock de estos productos. Solo lo uso al inaugurar.</span>
+						<span>Entiendo que esto <strong>borra y reemplaza TODO el inventario actual</strong>. Solo lo uso al inaugurar.</span>
 					</label>
 					<button onclick={iniciarInventario} disabled={iniCargando || !iniConfirmo} class="rounded-lg bg-amber-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
 						{iniCargando ? 'Cargando…' : 'Iniciar inventario'}
@@ -571,6 +587,11 @@
 						</ul>
 					{/if}
 				</div>
+				{#if iniResultado.categoriasFaltantes?.length}
+					<div class="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+						⚠️ Estas categorías no existían, así que esos productos quedaron <strong>sin categoría</strong>: {iniResultado.categoriasFaltantes.join(', ')}. Créalas en Categorías (o el catálogo por giro) y vuelve a cargar para asignarlas.
+					</div>
+				{/if}
 			{/if}
 		</section>
 
@@ -666,12 +687,15 @@
 		<section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
 			<h2 class="mb-1 font-semibold text-slate-800">Importar categorías</h2>
 			<p class="mb-3 text-sm text-slate-500">
-				Archivo .xlsx o .csv con columna <code class="rounded bg-slate-100 px-1 text-xs">CATEGORIA</code>
-				(obligatoria) y opcionalmente DESCRIPCION. Se omiten las que ya existen.
+				Archivo .xlsx o .csv. Obligatorias: <code class="rounded bg-slate-100 px-1 text-xs">CATEGORIA</code>
+				y <code class="rounded bg-slate-100 px-1 text-xs">DESCRIPCION</code> (ambas obligatorias). Se omiten las que ya existen.
 			</p>
 			<button type="button" onclick={() => descargarPlantillaCSV('categorias', ['CATEGORIA', 'DESCRIPCION'], ['BEBIDAS', 'Refrescos y aguas'])} class="mb-2 text-sm font-medium text-indigo-600 hover:underline">⬇️ Descargar plantilla .csv</button>
 			<input type="file" accept=".xlsx,.csv" onchange={onArchivoCategorias} class="mb-2 block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100" />
 
+			{#if catErrores.length}
+				<p class="mt-2 text-sm font-medium text-red-800">⚠️ Archivo no importado. Corrige estos datos y vuelve a subirlo:</p>
+			{/if}
 			{#each catErrores as err, i (i)}
 				<p class="mt-1 text-sm text-red-700">{err}</p>
 			{/each}

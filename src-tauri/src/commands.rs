@@ -238,13 +238,22 @@ pub fn actualizar_categoria(
     activo: bool,
 ) -> Result<(), String> {
     exigir_admin(&sesion)?;
+    let nombre = limpiar(&categoria);
+    if nombre.is_empty() {
+        return Err("El nombre de la categoría es obligatorio".into());
+    }
+    let desc = descripcion
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .ok_or_else(|| "La descripción es obligatoria".to_string())?;
     let conn = pool.get().map_err(|e| e.to_string())?;
     conn.execute(
         "UPDATE Categorias SET Categoria = ?1, Descripcion = ?2, Activo = ?3 WHERE ID_Categoria = ?4",
-        params![categoria, descripcion, activo as i64, id],
+        params![nombre, desc, activo as i64, id],
     )
     .map_err(|e| e.to_string())?;
-    bitacora(&pool, &sesion, "Edición", "Categoría", Some(id), &categoria);
+    bitacora(&pool, &sesion, "Edición", "Categoría", Some(id), &nombre);
     Ok(())
 }
 
@@ -273,14 +282,28 @@ pub fn crear_categoria(
     descripcion: Option<String>,
 ) -> Result<i64, String> {
     exigir_admin(&sesion)?;
+    let nombre = limpiar(&categoria);
+    if nombre.is_empty() {
+        return Err("El nombre de la categoría es obligatorio".into());
+    }
     let conn = pool.get().map_err(|e| e.to_string())?;
+    // Evita duplicados ignorando mayúsculas/acentos (no se puede comparar en SQL,
+    // así que se valida con la clave normalizada en Rust).
+    if cargar_mapa_categorias(&conn)?.contains_key(&clave_cat(&nombre)) {
+        return Err(format!("Ya existe la categoría \"{nombre}\""));
+    }
+    let desc = descripcion
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .ok_or_else(|| "La descripción es obligatoria".to_string())?;
     conn.execute(
         "INSERT INTO Categorias (Categoria, Descripcion) VALUES (?1, ?2)",
-        params![categoria, descripcion],
+        params![nombre, desc],
     )
     .map_err(|e| e.to_string())?;
     let id = conn.last_insert_rowid();
-    bitacora(&pool, &sesion, "Alta", "Categoría", Some(id), &categoria);
+    bitacora(&pool, &sesion, "Alta", "Categoría", Some(id), &nombre);
     Ok(id)
 }
 
@@ -1162,6 +1185,50 @@ fn norm(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ").to_uppercase()
 }
 
+/// Limpia un texto para GUARDARLO: recorta y colapsa espacios, pero conserva
+/// mayúsculas/minúsculas y acentos tal como los escribió el usuario.
+fn limpiar(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Clave para COMPARAR categorías sin duplicar: ignora mayúsculas, espacios y
+/// acentos. Así "Cremería y Lácteos" == "CREMERIA Y LACTEOS".
+fn clave_cat(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .map(|c| match c {
+            'á' | 'à' | 'ä' | 'â' | 'Á' | 'À' | 'Ä' | 'Â' => 'A',
+            'é' | 'è' | 'ë' | 'ê' | 'É' | 'È' | 'Ë' | 'Ê' => 'E',
+            'í' | 'ì' | 'ï' | 'î' | 'Í' | 'Ì' | 'Ï' | 'Î' => 'I',
+            'ó' | 'ò' | 'ö' | 'ô' | 'Ó' | 'Ò' | 'Ö' | 'Ô' => 'O',
+            'ú' | 'ù' | 'ü' | 'û' | 'Ú' | 'Ù' | 'Ü' | 'Û' => 'U',
+            'ñ' | 'Ñ' => 'N',
+            otro => otro.to_ascii_uppercase(),
+        })
+        .collect()
+}
+
+/// Mapa { clave_cat(nombre) -> ID_Categoria } de las categorías existentes, para
+/// emparejar sin distinguir mayúsculas/acentos al importar productos.
+fn cargar_mapa_categorias(
+    conn: &rusqlite::Connection,
+) -> Result<std::collections::HashMap<String, i64>, String> {
+    let mut stmt = conn
+        .prepare("SELECT ID_Categoria, Categoria FROM Categorias")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?;
+    let mut mapa = std::collections::HashMap::new();
+    for row in rows {
+        let (id, nombre) = row.map_err(|e| e.to_string())?;
+        mapa.insert(clave_cat(&nombre), id);
+    }
+    Ok(mapa)
+}
+
 #[tauri::command]
 pub fn importar_productos(
     pool: State<Db>,
@@ -1175,6 +1242,8 @@ pub fn importar_productos(
     let mut insertados = 0i64;
     let mut omitidos = 0i64;
     let mut errores: Vec<String> = Vec::new();
+    let cat_por_clave = cargar_mapa_categorias(&tx)?;
+    let mut faltantes_cat: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     for (i, f) in filas.iter().enumerate() {
         let renglon = i + 2; // +1 por encabezado, +1 por base-1
@@ -1196,27 +1265,17 @@ pub fn importar_productos(
             .map(|c| norm(c))
             .filter(|c| !c.is_empty());
 
-        // Categoría por nombre (se crea si no existe)
+        // Categoría: SOLO se enlaza si ya existe (NO se crea al vuelo, así no salen
+        // categorías sin descripción ni repetidas). Si falta, se reporta y el
+        // producto queda sin categoría.
         let id_cat: Option<i64> = match &f.categoria {
-            Some(c) if !c.trim().is_empty() => {
-                let cn = norm(c);
-                let found: Option<i64> = tx
-                    .query_row(
-                        "SELECT ID_Categoria FROM Categorias WHERE UPPER(Categoria) = ?1",
-                        [&cn],
-                        |r| r.get(0),
-                    )
-                    .optional()
-                    .map_err(|e| e.to_string())?;
-                match found {
-                    Some(id) => Some(id),
-                    None => {
-                        tx.execute("INSERT INTO Categorias (Categoria) VALUES (?1)", [&cn])
-                            .map_err(|e| e.to_string())?;
-                        Some(tx.last_insert_rowid())
-                    }
+            Some(c) if !c.trim().is_empty() => match cat_por_clave.get(&clave_cat(c)) {
+                Some(id) => Some(*id),
+                None => {
+                    faltantes_cat.insert(limpiar(c));
+                    None
                 }
-            }
+            },
             _ => None,
         };
 
@@ -1303,15 +1362,15 @@ pub fn importar_productos(
         insertados,
         omitidos,
         errores,
+        categorias_faltantes: faltantes_cat.into_iter().collect(),
     })
 }
 
-/// Carga inicial de inventario ("al inaugurar"). A diferencia de `importar_productos`,
-/// busca el producto por código o nombre, y si ya existe lo REUTILIZA. En todos los
-/// casos RESETEA el stock de cada producto del archivo (borra sus capas, lotes y
-/// movimientos de "Inventario inicial") y lo vuelve a sembrar con la existencia y el
-/// costo del CSV. Es idempotente: re-correr el mismo archivo deja el mismo resultado.
-/// NO toca productos que no estén en el archivo.
+/// Carga inicial de inventario ("al inaugurar"). REEMPLAZO TOTAL: borra todo el
+/// inventario actual (productos, existencias, capas PEPS, lotes y movimientos) y lo
+/// deja EXACTAMENTE como el archivo. Conserva usuarios, ventas, configuración y
+/// categorías. Candado: si ya hay ventas o compras registradas (que dependen de los
+/// productos), aborta para no romper el historial.
 #[tauri::command]
 pub fn iniciar_inventario(
     pool: State<Db>,
@@ -1319,12 +1378,43 @@ pub fn iniciar_inventario(
     filas: Vec<FilaProductoImport>,
 ) -> Result<ResultadoImport, String> {
     exigir_admin(&sesion)?;
+    if filas.is_empty() {
+        return Err("El archivo no tiene productos".into());
+    }
     let mut conn = pool.get().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    // Candado: no se puede reiniciar si hay historial que dependa de los productos.
+    let con_historial: i64 = tx
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM Detalle_Ventas) + (SELECT COUNT(*) FROM Detalle_Compras)",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if con_historial > 0 {
+        return Err("No se puede reiniciar el inventario: ya hay ventas o compras \
+            registradas que dependen de los productos. Para cambiar el stock usa \
+            Compras o Ajustes."
+            .into());
+    }
+
+    // REEMPLAZO TOTAL: se vacía todo el inventario antes de sembrar el archivo.
+    // (Las categorías NO se borran; se conservan y se emparejan más abajo.)
+    tx.execute_batch(
+        "DELETE FROM MovimientosInventario;
+         DELETE FROM CapasCosto;
+         DELETE FROM Lotes;
+         DELETE FROM Inventario;
+         DELETE FROM Productos;",
+    )
+    .map_err(|e| e.to_string())?;
 
     let mut insertados = 0i64;
     let mut omitidos = 0i64;
     let mut errores: Vec<String> = Vec::new();
+    let cat_por_clave = cargar_mapa_categorias(&tx)?;
+    let mut faltantes_cat: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     for (i, f) in filas.iter().enumerate() {
         let renglon = i + 2;
@@ -1346,27 +1436,15 @@ pub fn iniciar_inventario(
             .map(|c| norm(c))
             .filter(|c| !c.is_empty());
 
-        // Categoría por nombre (se crea si no existe)
+        // Categoría: SOLO se enlaza si ya existe (no se crea). Si falta, se reporta.
         let id_cat: Option<i64> = match &f.categoria {
-            Some(c) if !c.trim().is_empty() => {
-                let cn = norm(c);
-                let found: Option<i64> = tx
-                    .query_row(
-                        "SELECT ID_Categoria FROM Categorias WHERE UPPER(Categoria) = ?1",
-                        [&cn],
-                        |r| r.get(0),
-                    )
-                    .optional()
-                    .map_err(|e| e.to_string())?;
-                match found {
-                    Some(id) => Some(id),
-                    None => {
-                        tx.execute("INSERT INTO Categorias (Categoria) VALUES (?1)", [&cn])
-                            .map_err(|e| e.to_string())?;
-                        Some(tx.last_insert_rowid())
-                    }
+            Some(c) if !c.trim().is_empty() => match cat_por_clave.get(&clave_cat(c)) {
+                Some(id) => Some(*id),
+                None => {
+                    faltantes_cat.insert(limpiar(c));
+                    None
                 }
-            }
+            },
             _ => None,
         };
 
@@ -1526,6 +1604,7 @@ pub fn iniciar_inventario(
         insertados,
         omitidos,
         errores,
+        categorias_faltantes: faltantes_cat.into_iter().collect(),
     })
 }
 
@@ -1615,6 +1694,7 @@ pub fn actualizar_precios(
         insertados,
         omitidos,
         errores,
+        categorias_faltantes: Vec::new(),
     })
 }
 
@@ -1631,30 +1711,36 @@ pub fn importar_categorias(
     let mut insertados = 0i64;
     let mut omitidos = 0i64;
     let mut errores: Vec<String> = Vec::new();
+    // Claves ya existentes (sin mayúsculas/acentos). Al insertar agregamos su clave,
+    // así también se evita duplicar repetidas DENTRO del mismo archivo.
+    let mut claves: std::collections::HashSet<String> =
+        cargar_mapa_categorias(&tx)?.into_keys().collect();
 
     for (i, f) in filas.iter().enumerate() {
-        let nombre = norm(&f.categoria);
+        // Se guarda en su caso original (no en MAYÚSCULAS), solo recortando espacios.
+        let nombre = limpiar(&f.categoria);
         if nombre.is_empty() {
             omitidos += 1;
             errores.push(format!("Fila {}: nombre vacío", i + 2));
             continue;
         }
-        let existe: i64 = tx
-            .query_row(
-                "SELECT COUNT(*) FROM Categorias WHERE UPPER(Categoria) = ?1",
-                [&nombre],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        if existe > 0 {
-            omitidos += 1; // ya existe, no duplicar
-            continue;
-        }
-        let desc = f
+        let desc = match f
             .descripcion
             .as_ref()
             .map(|d| d.trim().to_string())
-            .filter(|d| !d.is_empty());
+            .filter(|d| !d.is_empty())
+        {
+            Some(d) => d,
+            None => {
+                omitidos += 1;
+                errores.push(format!("Fila {} ({nombre}): falta DESCRIPCION", i + 2));
+                continue;
+            }
+        };
+        if !claves.insert(clave_cat(&nombre)) {
+            omitidos += 1; // ya existe (o repetida en el archivo) → no duplicar
+            continue;
+        }
         tx.execute(
             "INSERT INTO Categorias (Categoria, Descripcion) VALUES (?1, ?2)",
             params![nombre, desc],
@@ -1676,6 +1762,7 @@ pub fn importar_categorias(
         insertados,
         omitidos,
         errores,
+        categorias_faltantes: Vec::new(),
     })
 }
 
@@ -1755,6 +1842,7 @@ pub fn importar_proveedores(
         insertados,
         omitidos,
         errores,
+        categorias_faltantes: Vec::new(),
     })
 }
 
@@ -1821,6 +1909,7 @@ pub fn importar_clientes(
         insertados,
         omitidos,
         errores,
+        categorias_faltantes: Vec::new(),
     })
 }
 

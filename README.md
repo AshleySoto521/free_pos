@@ -223,9 +223,9 @@ verifica con la llave pública embebida. La **prueba se ancla por `machine_id`**
 - Validación en dos niveles: si **falta una columna obligatoria** o un **renglón viene incompleto**, se rechaza el archivo entero y se listan los errores (corregir en Excel y resubir). Todo es admin-only, parametrizado y queda en bitácora.
 - **Tres herramientas de productos** (Catálogos → Importar/Exportar), sin enciman­se:
   - **Agregar productos (catálogo)** — alta masiva de productos nuevos con **0 existencia** (no toca stock ni PEPS). Cols: `PRODUCTO`, `PRECIOVENTA`, `PRECIOCOSTO`, `CATEGORIA`, `UNIDAD` (+ `CODIGOBARRAS`, `SEVENDEPESO`).
-  - **Iniciar inventario** — carga inicial al inaugurar: **resetea y siembra** existencia + capas PEPS. Añade `EXISTENCIA` a las columnas anteriores.
+  - **Iniciar inventario** — carga inicial al inaugurar: **reemplazo TOTAL** (borra todos los productos, existencias, capas PEPS, lotes y movimientos, y siembra lo del archivo). Conserva usuarios, ventas, config y categorías; candado si ya hay ventas/compras. Añade `EXISTENCIA` a las columnas anteriores.
   - **Actualizar precios** — cambia precios en masa sin tocar stock. Cols: `PRODUCTO`, `PRECIOVENTA` (+ `CODIGOBARRAS`, `PRECIOCOSTO`).
-- Otros importables: **clientes** (`NOMBRE`, `TELEFONO` obligatorios + `EMAIL`), **proveedores** (`PROVEEDOR`, `TELEFONO` obligatorios + `CONTACTO`, `EMAIL`), **categorías** (`CATEGORIA` + `DESCRIPCION`).
+- Otros importables: **clientes** (`NOMBRE`, `TELEFONO` obligatorios + `EMAIL`), **proveedores** (`PROVEEDOR`, `TELEFONO` obligatorios + `CONTACTO`, `EMAIL`), **categorías** (`CATEGORIA` y `DESCRIPCION`, ambas obligatorias).
 - **Compras** importa la factura: `PRODUCTO`/`CODIGOBARRAS` + `PRECIOCOMPRA` + `CANTIDAD` (+ `PRECIOVENTA`, `LOTE`, `CADUCIDAD`). Si un producto no existe, **bloquea** el registro (no se crean productos desde compras).
 
 ---

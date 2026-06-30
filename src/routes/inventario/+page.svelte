@@ -35,6 +35,11 @@
 	let codigoBarras = $state('');
 	let precioUnitario = $state<number | null>(0);
 	let precioCosto = $state<number | null>(0);
+	// Utilidad en vivo a partir de costo y precio de venta capturados.
+	const utilidad = $derived((precioUnitario ?? 0) - (precioCosto ?? 0));
+	const margenPct = $derived(
+		(precioUnitario ?? 0) > 0 ? (utilidad / (precioUnitario as number)) * 100 : null
+	);
 	let tipo = $state<'Producto' | 'Servicio'>('Producto');
 	let manejaCaducidad = $state(false);
 	let loteInicial = $state('');
@@ -53,6 +58,7 @@
 	// --- Modal categoría ---
 	let modalCat = $state(false);
 	let nombreCat = $state('');
+	let descCat = $state('');
 	let errorCat = $state('');
 
 	// --- Modal ajuste de existencia ---
@@ -231,12 +237,17 @@
 			errorCat = 'Escribe un nombre.';
 			return;
 		}
+		if (!descCat.trim()) {
+			errorCat = 'La descripción es obligatoria.';
+			return;
+		}
 		errorCat = '';
 		try {
-			const id = await api.crearCategoria(nombreCat.trim());
+			const id = await api.crearCategoria(nombreCat.trim(), descCat.trim());
 			categorias = await api.listarCategorias();
 			idCat = id;
 			nombreCat = '';
+			descCat = '';
 			modalCat = false;
 		} catch (e) {
 			errorCat = String(e);
@@ -423,6 +434,20 @@
 					{/if}
 				</div>
 
+				{#if tipo === 'Producto' && ((precioUnitario ?? 0) > 0 || (precioCosto ?? 0) > 0)}
+					{#if utilidad >= 0}
+						<div class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+							💰 Ganas <strong>{pesos(utilidad)}</strong> por unidad{#if margenPct != null}
+								· margen <strong>{margenPct.toFixed(0)}%</strong>{/if}
+						</div>
+					{:else}
+						<div class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+							⚠️ Lo estás vendiendo <strong>por debajo del costo</strong>: pierdes
+							<strong>{pesos(-utilidad)}</strong> por unidad.
+						</div>
+					{/if}
+				{/if}
+
 				<div class="grid grid-cols-2 gap-3">
 					<div>
 						<div class="mb-1 flex items-center justify-between">
@@ -503,7 +528,8 @@
 	<div class="fixed inset-0 z-20 flex items-start justify-center overflow-y-auto bg-black/40 p-4">
 		<div class="w-full max-w-xs rounded-2xl bg-white p-6 shadow-xl">
 			<h2 class="mb-3 text-base font-semibold text-slate-800">Nueva categoría</h2>
-			<input bind:value={nombreCat} placeholder="Ej. Bebidas" class="mb-2 w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+			<input bind:value={nombreCat} placeholder="Nombre * (ej. Bebidas)" class="mb-2 w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+			<input bind:value={descCat} placeholder="Descripción * (ej. Refrescos, aguas y jugos)" class="mb-2 w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
 			{#if errorCat}
 				<p class="mb-2 text-sm text-red-700">{errorCat}</p>
 			{/if}

@@ -19,7 +19,7 @@ Punto de venta para tu negocio (abarrotes, farmacia, refaccionaria, papelería, 
 2. Captura los **datos del negocio** (nombre, dirección, teléfono, pie de ticket) — aparecen en el ticket.
 3. Elige tu **moneda** y tu **modo de venta** (productos, servicios o ambos) en el asistente inicial o en **Configuración**.
 4. Elige un **catálogo de categorías** según tu giro (asistente inicial, o Catálogos → Categorías → **📚 Catálogo por giro**).
-5. Carga tu inventario: en **Catálogos → Importar/Exportar → 🏁 Iniciar inventario** sube tu existencia inicial de una vez (solo al inaugurar). Después, el stock entra por **Compras**.
+5. Carga tu inventario: en **Catálogos → Importar/Exportar → 🏁 Iniciar inventario** sube tu existencia inicial de una vez (solo al inaugurar; **reemplaza todo el inventario** por el archivo). Después, el stock entra por **Compras**.
 
 ## Vender 🛒
 
@@ -80,12 +80,12 @@ Registro de auditoría: **quién hizo qué y cuándo** (ventas, cancelaciones, a
 - Si falta una columna o un renglón está incompleto, **no se importa nada** y te dice exactamente qué corregir (arréglalo en Excel y vuelve a subir).
 - **Tres formas de cargar productos** (no se enciman):
   - **Agregar productos (catálogo)** — para **expansión**: da de alta productos nuevos con 0 existencia (el stock entra luego por Compras). Columnas: `PRODUCTO`, `PRECIOVENTA`, `PRECIOCOSTO`, `CATEGORIA`, `UNIDAD` + opcionales `CODIGOBARRAS`, `SEVENDEPESO` (Sí/No).
-  - **🏁 Iniciar inventario** — **solo al inaugurar**: carga tu existencia inicial (resetea y siembra). Agrega `EXISTENCIA`.
+  - **🏁 Iniciar inventario** — **solo al inaugurar**: **borra TODO el inventario actual** y lo deja exactamente como el archivo (conserva usuarios, ventas, configuración y categorías; no se permite si ya hay ventas/compras). Agrega `EXISTENCIA`.
   - **💲 Actualizar precios** — cambia precios en masa sin tocar existencias. Columnas: `PRODUCTO`, `PRECIOVENTA` (+ `PRECIOCOSTO`).
 - Otros archivos:
   - **Clientes:** `NOMBRE` y `TELEFONO` (obligatorios) + `EMAIL`.
   - **Proveedores:** `PROVEEDOR` y `TELEFONO` (obligatorios) + `CONTACTO`, `EMAIL`.
-  - **Categorías:** `CATEGORIA` (+ `DESCRIPCION`).
+  - **Categorías:** `CATEGORIA` y `DESCRIPCION` (ambas obligatorias).
 
 ## Licencia
 

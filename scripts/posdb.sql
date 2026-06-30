@@ -20,7 +20,7 @@ CREATE TABLE "UnidadMedida" (
 CREATE TABLE "Categorias" (
   "ID_Categoria" INTEGER PRIMARY KEY AUTOINCREMENT,
   "Categoria" TEXT NOT NULL,
-  "Descripcion" TEXT,
+  "Descripcion" TEXT NOT NULL,         -- obligatoria (para que cada categoría se explique sola)
   "Activo" INTEGER DEFAULT 1,
   "FechaCreacion" DATETIME DEFAULT CURRENT_TIMESTAMP
 );

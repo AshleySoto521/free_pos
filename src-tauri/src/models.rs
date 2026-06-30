@@ -83,6 +83,10 @@ pub struct ResultadoImport {
     pub insertados: i64,
     pub omitidos: i64,
     pub errores: Vec<String>,
+    /// Solo en importación de productos: categorías del archivo que no existían
+    /// (los productos se importaron SIN categoría; el usuario debe crearlas).
+    #[serde(default)]
+    pub categorias_faltantes: Vec<String>,
 }
 
 /// Una entrada de la bitácora de auditoría.

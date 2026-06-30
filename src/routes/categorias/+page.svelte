@@ -59,13 +59,17 @@
 			error = 'El nombre es obligatorio.';
 			return;
 		}
+		if (!descripcion.trim()) {
+			error = 'La descripción es obligatoria.';
+			return;
+		}
 		guardando = true;
 		error = '';
 		try {
 			if (editandoId != null) {
-				await api.actualizarCategoria(editandoId, nombre.trim(), descripcion.trim() || null, activo);
+				await api.actualizarCategoria(editandoId, nombre.trim(), descripcion.trim(), activo);
 			} else {
-				await api.crearCategoria(nombre.trim(), descripcion.trim() || null);
+				await api.crearCategoria(nombre.trim(), descripcion.trim());
 			}
 			await cargar();
 			modal = false;
@@ -156,12 +160,12 @@
 			</div>
 			<div class="space-y-3">
 				<div>
-					<label for="cn" class="mb-1 block text-sm font-medium text-slate-700">Nombre</label>
-					<input id="cn" bind:value={nombre} placeholder="Ej. Bebidas" class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+					<label for="cn" class="mb-1 block text-sm font-medium text-slate-700">Nombre *</label>
+					<input id="cn" bind:value={nombre} placeholder="Ej. Bebidas" required class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
 				</div>
 				<div>
-					<label for="cd" class="mb-1 block text-sm font-medium text-slate-700">Descripción (opcional)</label>
-					<input id="cd" bind:value={descripcion} class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+					<label for="cd" class="mb-1 block text-sm font-medium text-slate-700">Descripción *</label>
+					<input id="cd" bind:value={descripcion} placeholder="Ej. Refrescos, aguas y jugos" required class="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
 				</div>
 				{#if editandoId != null}
 					<label class="flex items-center gap-2 text-sm text-slate-700">
